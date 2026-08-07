@@ -1,0 +1,2 @@
+import { Skeleton } from "@/components/ui/core";
+export default function Loading() { return <div className="container-shell section-space" aria-label="Loading page"><Skeleton className="h-10 w-56" /><Skeleton className="mt-4 h-6 w-full max-w-xl" /><div className="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton className="h-72" key={i} />)}</div></div>; }
