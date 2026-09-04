@@ -49,10 +49,7 @@ import { apiRequest } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
 import { useCurrentUser, type CurrentUser } from "@/lib/current-user";
 import { formatCurrency, formatDate } from "@/lib/utils";
-import {
-  mapDoctor,
-  type ApiDoctor,
-} from "@/services/healthcare-service";
+import { mapDoctor, type ApiDoctor } from "@/services/healthcare-service";
 import type { Appointment, Doctor, Paginated, UserRole } from "@/types";
 
 interface DashboardSummary {
@@ -134,7 +131,12 @@ interface ApiReview {
 interface ApiPrescription {
   _id: string;
   diagnosis: string;
-  medications: { name: string; dosage: string; frequency: string; duration: string }[];
+  medications: {
+    name: string;
+    dosage: string;
+    frequency: string;
+    duration: string;
+  }[];
   notes?: string;
   createdAt: string;
 }
@@ -273,9 +275,15 @@ function Overview({ role }: { role: UserRole }) {
         }>("/api/analytics/patient", { signal });
         return {
           metrics: [
-            { label: "Upcoming appointments", value: value.upcomingAppointments.length },
+            {
+              label: "Upcoming appointments",
+              value: value.upcomingAppointments.length,
+            },
             { label: "Past appointments", value: value.historyCount },
-            { label: "Total paid", value: formatCurrency(value.totalPaidAmount) },
+            {
+              label: "Total paid",
+              value: formatCurrency(value.totalPaidAmount),
+            },
             { label: "Favorite doctors", value: value.favoriteDoctorsCount },
           ],
           recentActivity: value.upcomingAppointments.map((item) => ({
@@ -319,7 +327,10 @@ function Overview({ role }: { role: UserRole }) {
           {
             label: "Recorded revenue",
             value: formatCurrency(
-              value.revenueOverTime.reduce((sum, item) => sum + item.revenue, 0),
+              value.revenueOverTime.reduce(
+                (sum, item) => sum + item.revenue,
+                0,
+              ),
             ),
           },
         ],
@@ -499,8 +510,8 @@ function Payments({ role }: { role: UserRole }) {
       const value = await apiRequest<Paginated<ApiPayment>>(
         role === "admin" ? "/api/admin/payments" : "/api/payments/mine",
         {
-        query: { page: 1, limit: 20 },
-        signal,
+          query: { page: 1, limit: 20 },
+          signal,
         },
       );
       return {
@@ -508,8 +519,10 @@ function Payments({ role }: { role: UserRole }) {
         data: value.data.map((payment) => ({
           id: payment._id,
           transactionId: payment.transactionId ?? payment.stripePaymentIntentId,
-          patientName: payment.patientName ?? `Patient #${shortId(payment.patientId)}`,
-          doctorName: payment.doctorName ?? `Doctor #${shortId(payment.doctorId)}`,
+          patientName:
+            payment.patientName ?? `Patient #${shortId(payment.patientId)}`,
+          doctorName:
+            payment.doctorName ?? `Doctor #${shortId(payment.doctorId)}`,
           amount: payment.amount,
           status: payment.paymentStatus,
           createdAt: payment.createdAt,
@@ -544,7 +557,10 @@ function Favorites() {
   const q = useQuery({
     queryKey: ["favorites"],
     queryFn: async ({ signal }) => {
-      const value = await apiRequest<{ doctor: ApiDoctor }[]>("/api/favorites", { signal });
+      const value = await apiRequest<{ doctor: ApiDoctor }[]>(
+        "/api/favorites",
+        { signal },
+      );
       return value.map((item) => mapDoctor(item.doctor));
     },
   });
@@ -573,11 +589,17 @@ function Favorites() {
               aria-label="Remove favorite"
               onClick={async () => {
                 try {
-                  await apiRequest(`/api/favorites/${d.id}`, { method: "DELETE" });
+                  await apiRequest(`/api/favorites/${d.id}`, {
+                    method: "DELETE",
+                  });
                   await client.invalidateQueries({ queryKey: ["favorites"] });
                   toast.success("Removed from favorites");
                 } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "Could not remove favorite");
+                  toast.error(
+                    error instanceof Error
+                      ? error.message
+                      : "Could not remove favorite",
+                  );
                 }
               }}
             >
@@ -598,7 +620,8 @@ function Favorites() {
 function Reviews() {
   const reviews = useQuery({
     queryKey: ["reviews", "mine"],
-    queryFn: ({ signal }) => apiRequest<ApiReview[]>("/api/reviews/mine", { signal }),
+    queryFn: ({ signal }) =>
+      apiRequest<ApiReview[]>("/api/reviews/mine", { signal }),
   });
   return (
     <Card className="p-6">
@@ -617,9 +640,15 @@ function Reviews() {
         <div className="mt-5 divide-y divide-border">
           {reviews.data.map((review) => (
             <div key={review._id} className="py-5">
-              <p className="font-bold text-amber-600">{review.rating}/5 stars</p>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">{review.reviewText}</p>
-              <p className="mt-2 text-xs text-muted-foreground">{formatDate(review.createdAt)}</p>
+              <p className="font-bold text-amber-600">
+                {review.rating}/5 stars
+              </p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                {review.reviewText}
+              </p>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {formatDate(review.createdAt)}
+              </p>
             </div>
           ))}
         </div>
@@ -649,14 +678,29 @@ type MedicationForm = {
 function Prescriptions({ role }: { role: UserRole }) {
   const prescriptions = useQuery({
     queryKey: ["prescriptions", "mine"],
-    queryFn: ({ signal }) => apiRequest<ApiPrescription[]>("/api/prescriptions/mine", { signal }),
+    queryFn: ({ signal }) =>
+      apiRequest<ApiPrescription[]>("/api/prescriptions/mine", { signal }),
     enabled: role === "patient",
+  });
+  const completedAppointments = useQuery({
+    queryKey: ["appointments", "doctor", "completed-for-prescription"],
+    queryFn: async ({ signal }) => {
+      const value = await apiRequest<Paginated<ApiAppointment>>(
+        "/api/appointments/assigned",
+        { query: { page: 1, limit: 100 }, signal },
+      );
+      return value.data.filter(
+        (appointment) => appointment.appointmentStatus === "completed",
+      );
+    },
+    enabled: role === "doctor",
   });
   const {
     register,
     control,
     handleSubmit,
-    formState: { isSubmitting },
+    reset,
+    formState: { errors, isSubmitting },
   } = useForm<MedicationForm>({
     defaultValues: {
       appointmentId: "",
@@ -675,16 +719,24 @@ function Prescriptions({ role }: { role: UserRole }) {
             <p className="text-xs font-semibold text-muted-foreground">
               {formatDate(prescription.createdAt)}
             </p>
-            <h2 className="mt-2 text-lg font-extrabold">{prescription.diagnosis}</h2>
+            <h2 className="mt-2 text-lg font-extrabold">
+              {prescription.diagnosis}
+            </h2>
             <ul className="mt-4 space-y-3">
               {prescription.medications.map((medicine, index) => (
-                <li key={`${medicine.name}-${index}`} className="rounded-xl bg-muted p-3 text-sm">
-                  <b>{medicine.name}</b> — {medicine.dosage}, {medicine.frequency} for {medicine.duration}
+                <li
+                  key={`${medicine.name}-${index}`}
+                  className="rounded-xl bg-muted p-3 text-sm"
+                >
+                  <b>{medicine.name}</b> — {medicine.dosage},{" "}
+                  {medicine.frequency} for {medicine.duration}
                 </li>
               ))}
             </ul>
             {prescription.notes && (
-              <p className="mt-4 text-sm text-muted-foreground">{prescription.notes}</p>
+              <p className="mt-4 text-sm text-muted-foreground">
+                {prescription.notes}
+              </p>
             )}
           </Card>
         ))}
@@ -705,6 +757,7 @@ function Prescriptions({ role }: { role: UserRole }) {
             body: values,
           });
           toast.success("Prescription saved");
+          reset();
         } catch (e) {
           toast.error(
             e instanceof Error ? e.message : "Could not save prescription",
@@ -715,15 +768,61 @@ function Prescriptions({ role }: { role: UserRole }) {
     >
       <Card className="p-6">
         <div className="mb-5">
-          <Label>Completed appointment ID</Label>
-          <Input
-            placeholder="Paste the completed appointment ID"
-            {...register("appointmentId", { required: true })}
-          />
+          <Label htmlFor="prescription-appointment">
+            Completed appointment
+          </Label>
+          <Select
+            id="prescription-appointment"
+            disabled={
+              completedAppointments.isPending ||
+              !completedAppointments.data?.length
+            }
+            aria-invalid={Boolean(errors.appointmentId)}
+            {...register("appointmentId", {
+              required: "Choose a completed appointment",
+            })}
+          >
+            <option value="">
+              {completedAppointments.isPending
+                ? "Loading completed appointments…"
+                : "Choose a completed appointment"}
+            </option>
+            {completedAppointments.data?.map((appointment) => (
+              <option key={appointment._id} value={appointment._id}>
+                {appointment.patientName ??
+                  `Patient #${shortId(appointment.patientId)}`}{" "}
+                — {formatDate(appointment.appointmentDate)} at{" "}
+                {appointment.appointmentTime}
+              </option>
+            ))}
+          </Select>
+          {errors.appointmentId ? (
+            <p className="mt-1 text-sm text-danger">
+              {errors.appointmentId.message}
+            </p>
+          ) : !completedAppointments.isPending &&
+            !completedAppointments.data?.length ? (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Accept an appointment and mark it completed before creating its
+              prescription.
+            </p>
+          ) : null}
         </div>
         <div>
-          <Label>Diagnosis</Label>
-          <Input {...register("diagnosis", { required: true })} />
+          <Label htmlFor="prescription-diagnosis">Diagnosis</Label>
+          <Input
+            id="prescription-diagnosis"
+            aria-invalid={Boolean(errors.diagnosis)}
+            {...register("diagnosis", {
+              required: "Diagnosis is required",
+              minLength: { value: 2, message: "Diagnosis is too short" },
+            })}
+          />
+          {errors.diagnosis && (
+            <p className="mt-1 text-sm text-danger">
+              {errors.diagnosis.message}
+            </p>
+          )}
         </div>
         <div className="mt-5">
           <Label>Medications</Label>
@@ -736,21 +835,41 @@ function Prescriptions({ role }: { role: UserRole }) {
                 <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                   <Input
                     placeholder="Medicine name"
-                    {...register(`medications.${i}.name`, { required: true })}
+                    aria-invalid={Boolean(errors.medications?.[i]?.name)}
+                    {...register(`medications.${i}.name`, {
+                      required: "Medicine name is required",
+                    })}
                   />
                   <Input
                     placeholder="Dosage"
-                    {...register(`medications.${i}.dosage`)}
+                    aria-invalid={Boolean(errors.medications?.[i]?.dosage)}
+                    {...register(`medications.${i}.dosage`, {
+                      required: "Dosage is required",
+                    })}
                   />
                   <Input
                     placeholder="Frequency"
-                    {...register(`medications.${i}.frequency`)}
+                    aria-invalid={Boolean(errors.medications?.[i]?.frequency)}
+                    {...register(`medications.${i}.frequency`, {
+                      required: "Frequency is required",
+                    })}
                   />
                   <Input
                     placeholder="Duration"
-                    {...register(`medications.${i}.duration`)}
+                    aria-invalid={Boolean(errors.medications?.[i]?.duration)}
+                    {...register(`medications.${i}.duration`, {
+                      required: "Duration is required",
+                    })}
                   />
                 </div>
+                {errors.medications?.[i] && (
+                  <p className="mt-2 text-sm text-danger">
+                    {errors.medications[i]?.name?.message ??
+                      errors.medications[i]?.dosage?.message ??
+                      errors.medications[i]?.frequency?.message ??
+                      errors.medications[i]?.duration?.message}
+                  </p>
+                )}
                 <div className="mt-3 flex gap-3">
                   <Input
                     placeholder="Instructions"
@@ -798,7 +917,14 @@ function Prescriptions({ role }: { role: UserRole }) {
           Confirm medication details carefully. The server retains the
           authoritative clinical record.
         </p>
-        <Button className="mt-6 w-full" disabled={isSubmitting}>
+        <Button
+          className="mt-6 w-full"
+          disabled={
+            isSubmitting ||
+            completedAppointments.isPending ||
+            !completedAppointments.data?.length
+          }
+        >
           {isSubmitting ? "Saving…" : "Save prescription"}
         </Button>
       </Card>
@@ -810,7 +936,8 @@ function Schedule() {
   const client = useQueryClient();
   const schedules = useQuery({
     queryKey: ["schedules"],
-    queryFn: ({ signal }) => apiRequest<ApiSchedule[]>("/api/schedules/me", { signal }),
+    queryFn: ({ signal }) =>
+      apiRequest<ApiSchedule[]>("/api/schedules/me", { signal }),
   });
   const {
     register,
@@ -902,11 +1029,15 @@ function Schedule() {
         ) : schedules.data?.length ? (
           <div className="mt-5 divide-y divide-border">
             {schedules.data.map((schedule) => (
-              <div key={schedule._id} className="flex items-center justify-between py-4">
+              <div
+                key={schedule._id}
+                className="flex items-center justify-between py-4"
+              >
                 <div>
                   <p className="font-bold">{schedule.day}</p>
                   <p className="text-sm text-muted-foreground">
-                    {schedule.startTime}–{schedule.endTime} · {schedule.slotDuration} minute slots
+                    {schedule.startTime}–{schedule.endTime} ·{" "}
+                    {schedule.slotDuration} minute slots
                   </p>
                 </div>
                 <Status value={schedule.active ? "active" : "inactive"} />
@@ -944,7 +1075,8 @@ function Profile({ role }: { role: UserRole }) {
   const currentUser = useCurrentUser();
   const doctorProfile = useQuery({
     queryKey: ["doctor-profile", "mine"],
-    queryFn: ({ signal }) => apiRequest<ApiDoctor>("/api/doctors/me/profile", { signal }),
+    queryFn: ({ signal }) =>
+      apiRequest<ApiDoctor>("/api/doctors/me/profile", { signal }),
     enabled: role === "doctor",
   });
   const fileInput = useRef<HTMLInputElement>(null);
@@ -1006,7 +1138,9 @@ function Profile({ role }: { role: UserRole }) {
       client.setQueryData(["current-user"], updated);
       toast.success("Profile photo updated");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not upload the photo");
+      toast.error(
+        error instanceof Error ? error.message : "Could not upload the photo",
+      );
     } finally {
       setIsUploading(false);
       if (fileInput.current) fileInput.current.value = "";
@@ -1019,7 +1153,8 @@ function Profile({ role }: { role: UserRole }) {
     .join("")
     .slice(0, 2)
     .toUpperCase();
-  const displayImage = imagePreview ?? currentUser.data?.image ?? session?.user.image;
+  const displayImage =
+    imagePreview ?? currentUser.data?.image ?? session?.user.image;
 
   return (
     <div className="grid max-w-3xl gap-6">
@@ -1062,12 +1197,18 @@ function Profile({ role }: { role: UserRole }) {
                   method: "PATCH",
                   body: doctorFields,
                 });
-                await client.invalidateQueries({ queryKey: ["doctor-profile", "mine"] });
+                await client.invalidateQueries({
+                  queryKey: ["doctor-profile", "mine"],
+                });
               }
             }
             toast.success("Profile updated");
           } catch (error) {
-            toast.error(error instanceof Error ? error.message : "Could not update profile");
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "Could not update profile",
+            );
           }
         })}
       >
@@ -1075,7 +1216,11 @@ function Profile({ role }: { role: UserRole }) {
           <div className="flex items-center gap-5 border-b border-border pb-6">
             <span className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl bg-primary-soft text-2xl font-extrabold text-primary">
               {displayImage ? (
-                <img className="size-full object-cover" src={displayImage} alt="Profile" />
+                <img
+                  className="size-full object-cover"
+                  src={displayImage}
+                  alt="Profile"
+                />
               ) : (
                 initials
               )}
@@ -1083,7 +1228,8 @@ function Profile({ role }: { role: UserRole }) {
             <div>
               <h2 className="font-extrabold">Profile photo</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Your Google photo is used initially. Upload a JPG, PNG, or WebP smaller than 5 MB anytime.
+                Your Google photo is used initially. Upload a JPG, PNG, or WebP
+                smaller than 5 MB anytime.
               </p>
               <input
                 ref={fileInput}
@@ -1111,7 +1257,10 @@ function Profile({ role }: { role: UserRole }) {
             </div>
             <div>
               <Label>Email</Label>
-              <Input value={currentUser.data?.email ?? session?.user.email ?? ""} disabled />
+              <Input
+                value={currentUser.data?.email ?? session?.user.email ?? ""}
+                disabled
+              />
             </div>
             <div>
               <Label>Phone</Label>
@@ -1128,15 +1277,20 @@ function Profile({ role }: { role: UserRole }) {
             </div>
             <div>
               <Label>Location</Label>
-              <Input placeholder="City, district, or address" {...register("location")} />
+              <Input
+                placeholder="City, district, or address"
+                {...register("location")}
+              />
             </div>
             <div>
               <Label>Blood group</Label>
               <Select {...register("bloodGroup")}>
                 <option value="">Select blood group</option>
-                {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((group) => (
-                  <option key={group}>{group}</option>
-                ))}
+                {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map(
+                  (group) => (
+                    <option key={group}>{group}</option>
+                  ),
+                )}
               </Select>
             </div>
             {role === "doctor" && (
@@ -1147,11 +1301,19 @@ function Profile({ role }: { role: UserRole }) {
                 </div>
                 <div>
                   <Label>Experience (years)</Label>
-                  <Input type="number" min="0" {...register("experience", { valueAsNumber: true })} />
+                  <Input
+                    type="number"
+                    min="0"
+                    {...register("experience", { valueAsNumber: true })}
+                  />
                 </div>
                 <div>
                   <Label>Consultation fee</Label>
-                  <Input type="number" min="0" {...register("consultationFee", { valueAsNumber: true })} />
+                  <Input
+                    type="number"
+                    min="0"
+                    {...register("consultationFee", { valueAsNumber: true })}
+                  />
                 </div>
                 <div className="sm:col-span-2">
                   <Label>Qualifications</Label>
@@ -1165,7 +1327,8 @@ function Profile({ role }: { role: UserRole }) {
             )}
           </div>
           <p className="mt-5 text-xs text-muted-foreground">
-            Email changes require a separate verification flow and are disabled here.
+            Email changes require a separate verification flow and are disabled
+            here.
           </p>
           <Button className="mt-6" disabled={isSubmitting}>
             {isSubmitting ? "Saving…" : "Save changes"}
@@ -1183,8 +1346,16 @@ function PasswordForm() {
     handleSubmit,
     reset,
     formState: { isSubmitting },
-  } = useForm<{ currentPassword: string; newPassword: string; confirmPassword: string }>({
-    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
+  } = useForm<{
+    currentPassword: string;
+    newPassword: string;
+    confirmPassword: string;
+  }>({
+    defaultValues: {
+      currentPassword: "",
+      newPassword: "",
+      confirmPassword: "",
+    },
   });
   return (
     <form
@@ -1205,34 +1376,59 @@ function PasswordForm() {
           await apiRequest("/api/users/password", {
             method: "POST",
             body: {
-              ...(values.currentPassword ? { currentPassword: values.currentPassword } : {}),
+              ...(values.currentPassword
+                ? { currentPassword: values.currentPassword }
+                : {}),
               newPassword: values.newPassword,
             },
           });
           reset();
-          toast.success(values.currentPassword ? "Password changed" : "Password added to your account");
+          toast.success(
+            values.currentPassword
+              ? "Password changed"
+              : "Password added to your account",
+          );
         } catch (error) {
-          toast.error(error instanceof Error ? error.message : "Could not update password");
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Could not update password",
+          );
         }
       })}
     >
       <Card className="p-6 sm:p-8">
         <h2 className="text-lg font-extrabold">Password and security</h2>
         <p className="mt-2 text-sm leading-6 text-muted-foreground">
-          For a Google-only account, leave current password empty to add a password. Otherwise enter your existing password.
+          For a Google-only account, leave current password empty to add a
+          password. Otherwise enter your existing password.
         </p>
         <div className="mt-5 grid gap-5 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <Label>Current password</Label>
-            <Input type="password" autoComplete="current-password" {...register("currentPassword")} />
+            <Input
+              type="password"
+              autoComplete="current-password"
+              {...register("currentPassword")}
+            />
           </div>
           <div>
             <Label>New password</Label>
-            <Input type="password" autoComplete="new-password" required {...register("newPassword")} />
+            <Input
+              type="password"
+              autoComplete="new-password"
+              required
+              {...register("newPassword")}
+            />
           </div>
           <div>
             <Label>Confirm new password</Label>
-            <Input type="password" autoComplete="new-password" required {...register("confirmPassword")} />
+            <Input
+              type="password"
+              autoComplete="new-password"
+              required
+              {...register("confirmPassword")}
+            />
           </div>
         </div>
         <Button className="mt-6" disabled={isSubmitting}>
@@ -1249,15 +1445,20 @@ async function resizeProfileImage(file: File): Promise<string> {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
       const element = new Image();
       element.onload = () => resolve(element);
-      element.onerror = () => reject(new Error("The selected image could not be read"));
+      element.onerror = () =>
+        reject(new Error("The selected image could not be read"));
       element.src = source;
     });
-    const scale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+    const scale = Math.min(
+      1,
+      512 / Math.max(image.naturalWidth, image.naturalHeight),
+    );
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
     canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
     const context = canvas.getContext("2d");
-    if (!context) throw new Error("Image processing is unavailable in this browser");
+    if (!context)
+      throw new Error("Image processing is unavailable in this browser");
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/webp", 0.82);
   } finally {
@@ -1325,16 +1526,23 @@ function UsersPanel() {
                   size="sm"
                   variant="outline"
                   onClick={async () => {
-                    const action = u.status === "suspended" ? "reactivate" : "suspend";
+                    const action =
+                      u.status === "suspended" ? "reactivate" : "suspend";
                     if (!window.confirm(`${action} ${u.name}?`)) return;
                     try {
                       await apiRequest(`/api/admin/users/${u.id}/${action}`, {
                         method: "PATCH",
                       });
-                      await client.invalidateQueries({ queryKey: ["admin-users"] });
+                      await client.invalidateQueries({
+                        queryKey: ["admin-users"],
+                      });
                       toast.success(`User ${action}d`);
                     } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Could not update user");
+                      toast.error(
+                        error instanceof Error
+                          ? error.message
+                          : "Could not update user",
+                      );
                     }
                   }}
                 >
@@ -1354,10 +1562,13 @@ function DoctorsPanel() {
   const q = useQuery({
     queryKey: ["admin-doctors"],
     queryFn: async ({ signal }) => {
-      const value = await apiRequest<Paginated<ApiDoctor>>("/api/admin/doctors", {
-        query: { page: 1, limit: 20 },
-        signal,
-      });
+      const value = await apiRequest<Paginated<ApiDoctor>>(
+        "/api/admin/doctors",
+        {
+          query: { page: 1, limit: 20 },
+          signal,
+        },
+      );
       return { ...value, data: value.data.map(mapDoctor) };
     },
   });
@@ -1390,24 +1601,42 @@ function DoctorsPanel() {
                 size="sm"
                 onClick={async () => {
                   try {
-                    await apiRequest(`/api/admin/doctors/${d.id}/verify`, { method: "PATCH" });
-                    await client.invalidateQueries({ queryKey: ["admin-doctors"] });
+                    await apiRequest(`/api/admin/doctors/${d.id}/verify`, {
+                      method: "PATCH",
+                    });
+                    await client.invalidateQueries({
+                      queryKey: ["admin-doctors"],
+                    });
                     toast.success("Doctor verified");
                   } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Could not verify doctor");
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not verify doctor",
+                    );
                   }
                 }}
-              >Verify</Button>
+              >
+                Verify
+              </Button>
               <Button
                 size="sm"
                 variant="outline"
                 onClick={async () => {
                   try {
-                    await apiRequest(`/api/admin/doctors/${d.id}/reject`, { method: "PATCH" });
-                    await client.invalidateQueries({ queryKey: ["admin-doctors"] });
+                    await apiRequest(`/api/admin/doctors/${d.id}/reject`, {
+                      method: "PATCH",
+                    });
+                    await client.invalidateQueries({
+                      queryKey: ["admin-doctors"],
+                    });
                     toast.success("Doctor rejected");
                   } catch (error) {
-                    toast.error(error instanceof Error ? error.message : "Could not reject doctor");
+                    toast.error(
+                      error instanceof Error
+                        ? error.message
+                        : "Could not reject doctor",
+                    );
                   }
                 }}
               >

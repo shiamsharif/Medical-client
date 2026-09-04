@@ -1,9 +1,24 @@
 "use client";
 
-import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import {
+  Elements,
+  PaymentElement,
+  useElements,
+  useStripe,
+} from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Check, ChevronLeft, ChevronRight, Clock, CreditCard, FileText, ShieldCheck, Stethoscope } from "lucide-react";
+import {
+  CalendarDays,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  CreditCard,
+  FileText,
+  ShieldCheck,
+  Stethoscope,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -13,22 +28,424 @@ import { formatCurrency, formatDate } from "@/lib/utils";
 import { healthcareService } from "@/services/healthcare-service";
 
 const stripeKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
-const stripePromise = stripeKey && !stripeKey.includes("replace_me") ? loadStripe(stripeKey) : null;
+const stripePromise =
+  stripeKey && !stripeKey.includes("replace_me") ? loadStripe(stripeKey) : null;
+const isStripeTestMode = stripeKey?.startsWith("pk_test_") ?? false;
 const steps = ["Date", "Time", "Reason", "Review", "Payment"];
 
 export function BookingFlow({ doctorId }: { doctorId: string }) {
-  const [step, setStep] = useState(0); const [date, setDate] = useState(""); const [time, setTime] = useState(""); const [reason, setReason] = useState(""); const [clientSecret, setClientSecret] = useState<string>(); const [appointmentId, setAppointmentId] = useState<string>(); const [submitting, setSubmitting] = useState(false);
-  const doctor = useQuery({ queryKey: ["doctor", doctorId], queryFn: ({ signal }) => healthcareService.doctor(doctorId, signal) });
-  const slots = useQuery({ queryKey: ["availability", doctorId, date], queryFn: ({ signal }) => healthcareService.availability(doctorId, date, signal), enabled: Boolean(date) });
+  const [step, setStep] = useState(0);
+  const [date, setDate] = useState("");
+  const [time, setTime] = useState("");
+  const [reason, setReason] = useState("");
+  const [clientSecret, setClientSecret] = useState<string>();
+  const [appointmentId, setAppointmentId] = useState<string>();
+  const [submitting, setSubmitting] = useState(false);
+  const doctor = useQuery({
+    queryKey: ["doctor", doctorId],
+    queryFn: ({ signal }) => healthcareService.doctor(doctorId, signal),
+  });
+  const slots = useQuery({
+    queryKey: ["availability", doctorId, date],
+    queryFn: ({ signal }) =>
+      healthcareService.availability(doctorId, date, signal),
+    enabled: Boolean(date),
+  });
   const minDate = new Date().toISOString().slice(0, 10);
-  const dates = useMemo(() => Array.from({ length: 7 }, (_, i) => { const day = new Date(); day.setDate(day.getDate() + i); return day.toISOString().slice(0, 10); }), []);
-  const preparePayment = async () => { setSubmitting(true); try { const result = await apiRequest<{ appointmentId: string; clientSecret: string }>("/api/appointments", { method: "POST", body: { doctorId, appointmentDate: date, appointmentTime: time, symptoms: reason } }); setAppointmentId(result.appointmentId); setClientSecret(result.clientSecret); setStep(4); } catch (error) { toast.error(error instanceof Error ? error.message : "Could not prepare payment"); } finally { setSubmitting(false); } };
-  if (doctor.isPending) return <div className="container-shell section-space"><Skeleton className="h-[650px]" /></div>;
-  if (!doctor.data) return <div className="container-shell section-space text-center"><h1 className="text-3xl font-extrabold">Booking is unavailable</h1><p className="mt-2 text-muted-foreground">We could not load this doctor’s schedule.</p></div>;
+  const dates = useMemo(
+    () =>
+      Array.from({ length: 7 }, (_, i) => {
+        const day = new Date();
+        day.setDate(day.getDate() + i);
+        return day.toISOString().slice(0, 10);
+      }),
+    [],
+  );
+  const preparePayment = async () => {
+    setSubmitting(true);
+    try {
+      const result = await apiRequest<{
+        appointmentId: string;
+        clientSecret: string;
+      }>("/api/appointments", {
+        method: "POST",
+        body: {
+          doctorId,
+          appointmentDate: date,
+          appointmentTime: time,
+          symptoms: reason,
+        },
+      });
+      setAppointmentId(result.appointmentId);
+      setClientSecret(result.clientSecret);
+      setStep(4);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not prepare payment",
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  if (doctor.isPending)
+    return (
+      <div className="container-shell section-space">
+        <Skeleton className="h-[650px]" />
+      </div>
+    );
+  if (!doctor.data)
+    return (
+      <div className="container-shell section-space text-center">
+        <h1 className="text-3xl font-extrabold">Booking is unavailable</h1>
+        <p className="mt-2 text-muted-foreground">
+          We could not load this doctor’s schedule.
+        </p>
+      </div>
+    );
   const d = doctor.data;
-  const canContinue = step === 0 ? Boolean(date) : step === 1 ? Boolean(time) : step === 2 ? reason.trim().length >= 10 : true;
-  return <div className="container-shell section-space"><div className="mb-10"><p className="eyebrow">Secure appointment booking</p><h1 className="mt-3 text-4xl font-extrabold">Reserve your visit with {d.name}</h1></div><div className="grid gap-8 lg:grid-cols-[1fr_340px]"><Card className="p-5 sm:p-8"><ol className="mb-9 flex justify-between gap-1" aria-label="Booking progress">{steps.map((label, i) => <li key={label} className="flex flex-1 flex-col items-center gap-2 text-center text-xs"><span className={`grid size-8 place-items-center rounded-full font-bold ${i <= step ? "bg-primary text-white" : "bg-muted text-muted-foreground"}`}>{i < step ? <Check size={16} /> : i + 1}</span><span className={i <= step ? "font-bold text-foreground" : "text-muted-foreground"}>{label}</span></li>)}</ol>{step === 0 && <section><StepTitle icon={CalendarDays} title="Choose a date" description="Availability is loaded directly from the doctor's current schedule." /><div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">{dates.map((item) => <button key={item} className={`rounded-2xl border p-4 text-left transition ${date === item ? "border-primary bg-primary-soft ring-2 ring-primary/15" : "hover:border-primary/50"}`} onClick={() => { setDate(item); setTime(""); }} disabled={item < minDate}><span className="block text-xs text-muted-foreground">{new Date(`${item}T00:00:00`).toLocaleDateString("en", { weekday: "short" })}</span><span className="mt-1 block font-extrabold">{new Date(`${item}T00:00:00`).toLocaleDateString("en", { month: "short", day: "numeric" })}</span></button>)}</div></section>}{step === 1 && <section><StepTitle icon={Clock} title="Choose a time" description="A displayed slot is not guaranteed until the backend confirms your booking." />{slots.isPending ? <div className="mt-6 grid grid-cols-3 gap-3">{Array.from({ length: 6 }).map((_, i) => <Skeleton className="h-12" key={i} />)}</div> : slots.data?.length ? <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">{slots.data.map((slot) => <button key={slot.time} disabled={!slot.available} className={`rounded-xl border px-3 py-3 text-sm font-bold ${!slot.available ? "cursor-not-allowed bg-muted text-muted-foreground line-through" : time === slot.time ? "border-primary bg-primary text-white" : "hover:border-primary"}`} onClick={() => setTime(slot.time)}>{slot.time}</button>)}</div> : <p className="mt-6 rounded-xl bg-muted p-6 text-center text-muted-foreground">No available slots for this date. Please choose another date.</p>}</section>}{step === 2 && <section><StepTitle icon={FileText} title="Tell the doctor what brings you in" description="A brief note helps the clinician prepare. Avoid sharing highly sensitive details here." /><div className="mt-6"><Label htmlFor="reason">Symptoms or reason for visit</Label><Textarea id="reason" value={reason} maxLength={600} onChange={(e) => setReason(e.target.value)} placeholder="Briefly describe your concern (minimum 10 characters)" /><p className="mt-2 text-right text-xs text-muted-foreground">{reason.length}/600</p></div></section>}{step === 3 && <section><StepTitle icon={ShieldCheck} title="Review your appointment" description="Please confirm these details before continuing to secure payment." /><div className="mt-6 divide-y divide-border rounded-2xl border border-border">{[["Doctor", d.name], ["Date", formatDate(date)], ["Time", time], ["Reason", reason], ["Consultation fee", formatCurrency(d.consultationFee)]].map(([k, v]) => <div key={k} className="grid gap-1 px-5 py-4 sm:grid-cols-[160px_1fr]"><span className="text-sm text-muted-foreground">{k}</span><span className="font-semibold">{v}</span></div>)}</div><p className="mt-4 text-xs leading-5 text-muted-foreground">Consultation fees shown here are informational only. The backend loads the authoritative fee before creating a Stripe payment.</p></section>}{step === 4 && <section><StepTitle icon={CreditCard} title="Complete secure payment" description="Payment status is confirmed by the backend after Stripe processes it." />{stripePromise && clientSecret ? <Elements stripe={stripePromise} options={{ clientSecret }}><Checkout appointmentId={appointmentId!} /></Elements> : <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200"><h3 className="font-bold">Stripe configuration required</h3><p className="mt-2 text-sm leading-6">Add a valid publishable key to <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code>. No secret key belongs in this client.</p></div>}</section>} {step < 4 && <div className="mt-9 flex justify-between border-t border-border pt-5"><Button variant="ghost" disabled={step === 0} onClick={() => setStep(step - 1)}><ChevronLeft size={17} />Back</Button>{step === 3 ? <Button disabled={submitting} onClick={preparePayment}>{submitting ? "Confirming availability…" : "Continue to payment"}<ChevronRight size={17} /></Button> : <Button disabled={!canContinue} onClick={() => setStep(step + 1)}>Continue<ChevronRight size={17} /></Button>}</div>}</Card><aside><Card className="sticky top-24 p-6"><div className="flex items-center gap-4"><span className="grid size-14 place-items-center rounded-2xl bg-primary-soft text-primary"><Stethoscope /></span><div><p className="font-extrabold">{d.name}</p><p className="text-sm text-secondary">{d.specialization}</p></div></div><div className="mt-6 space-y-3 border-t border-border pt-5 text-sm"><p className="flex justify-between"><span className="text-muted-foreground">Date</span><b>{date ? formatDate(date) : "Not selected"}</b></p><p className="flex justify-between"><span className="text-muted-foreground">Time</span><b>{time || "Not selected"}</b></p><p className="flex justify-between text-base"><span className="text-muted-foreground">Fee</span><b className="text-primary">{formatCurrency(d.consultationFee)}</b></p></div></Card></aside></div></div>;
+  const canContinue =
+    step === 0
+      ? Boolean(date)
+      : step === 1
+        ? Boolean(time)
+        : step === 2
+          ? reason.trim().length >= 10
+          : true;
+  return (
+    <div className="container-shell section-space">
+      <div className="mb-10">
+        <p className="eyebrow">Secure appointment booking</p>
+        <h1 className="mt-3 text-4xl font-extrabold">
+          Reserve your visit with {d.name}
+        </h1>
+      </div>
+      <div className="grid gap-8 lg:grid-cols-[1fr_340px]">
+        <Card className="p-5 sm:p-8">
+          <ol
+            className="mb-9 flex justify-between gap-1"
+            aria-label="Booking progress"
+          >
+            {steps.map((label, i) => (
+              <li
+                key={label}
+                className="flex flex-1 flex-col items-center gap-2 text-center text-xs"
+              >
+                <span
+                  className={`grid size-8 place-items-center rounded-full font-bold ${i <= step ? "bg-primary text-white" : "bg-muted text-muted-foreground"}`}
+                >
+                  {i < step ? <Check size={16} /> : i + 1}
+                </span>
+                <span
+                  className={
+                    i <= step
+                      ? "font-bold text-foreground"
+                      : "text-muted-foreground"
+                  }
+                >
+                  {label}
+                </span>
+              </li>
+            ))}
+          </ol>
+          {step === 0 && (
+            <section>
+              <StepTitle
+                icon={CalendarDays}
+                title="Choose a date"
+                description="Availability is loaded directly from the doctor's current schedule."
+              />
+              <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                {dates.map((item) => (
+                  <button
+                    key={item}
+                    className={`rounded-2xl border p-4 text-left transition ${date === item ? "border-primary bg-primary-soft ring-2 ring-primary/15" : "hover:border-primary/50"}`}
+                    onClick={() => {
+                      setDate(item);
+                      setTime("");
+                    }}
+                    disabled={item < minDate}
+                  >
+                    <span className="block text-xs text-muted-foreground">
+                      {new Date(`${item}T00:00:00`).toLocaleDateString("en", {
+                        weekday: "short",
+                      })}
+                    </span>
+                    <span className="mt-1 block font-extrabold">
+                      {new Date(`${item}T00:00:00`).toLocaleDateString("en", {
+                        month: "short",
+                        day: "numeric",
+                      })}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {step === 1 && (
+            <section>
+              <StepTitle
+                icon={Clock}
+                title="Choose a time"
+                description="A displayed slot is not guaranteed until the backend confirms your booking."
+              />
+              {slots.isPending ? (
+                <div className="mt-6 grid grid-cols-3 gap-3">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <Skeleton className="h-12" key={i} />
+                  ))}
+                </div>
+              ) : slots.data?.length ? (
+                <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {slots.data.map((slot) => (
+                    <button
+                      key={slot.time}
+                      disabled={!slot.available}
+                      className={`rounded-xl border px-3 py-3 text-sm font-bold ${!slot.available ? "cursor-not-allowed bg-muted text-muted-foreground line-through" : time === slot.time ? "border-primary bg-primary text-white" : "hover:border-primary"}`}
+                      onClick={() => setTime(slot.time)}
+                    >
+                      {slot.time}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-6 rounded-xl bg-muted p-6 text-center text-muted-foreground">
+                  No available slots for this date. Please choose another date.
+                </p>
+              )}
+            </section>
+          )}
+          {step === 2 && (
+            <section>
+              <StepTitle
+                icon={FileText}
+                title="Tell the doctor what brings you in"
+                description="A brief note helps the clinician prepare. Avoid sharing highly sensitive details here."
+              />
+              <div className="mt-6">
+                <Label htmlFor="reason">Symptoms or reason for visit</Label>
+                <Textarea
+                  id="reason"
+                  value={reason}
+                  maxLength={600}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="Briefly describe your concern (minimum 10 characters)"
+                />
+                <p className="mt-2 text-right text-xs text-muted-foreground">
+                  {reason.length}/600
+                </p>
+              </div>
+            </section>
+          )}
+          {step === 3 && (
+            <section>
+              <StepTitle
+                icon={ShieldCheck}
+                title="Review your appointment"
+                description="Please confirm these details before continuing to secure payment."
+              />
+              <div className="mt-6 divide-y divide-border rounded-2xl border border-border">
+                {[
+                  ["Doctor", d.name],
+                  ["Date", formatDate(date)],
+                  ["Time", time],
+                  ["Reason", reason],
+                  ["Consultation fee", formatCurrency(d.consultationFee)],
+                ].map(([k, v]) => (
+                  <div
+                    key={k}
+                    className="grid gap-1 px-5 py-4 sm:grid-cols-[160px_1fr]"
+                  >
+                    <span className="text-sm text-muted-foreground">{k}</span>
+                    <span className="font-semibold">{v}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-4 text-xs leading-5 text-muted-foreground">
+                Consultation fees shown here are informational only. The backend
+                loads the authoritative fee before creating a Stripe payment.
+              </p>
+            </section>
+          )}
+          {step === 4 && (
+            <section>
+              <StepTitle
+                icon={CreditCard}
+                title="Complete secure payment"
+                description="Payment status is confirmed by the backend after Stripe processes it."
+              />
+              {stripePromise && clientSecret ? (
+                <Elements stripe={stripePromise} options={{ clientSecret }}>
+                  <Checkout
+                    appointmentId={appointmentId!}
+                    testMode={isStripeTestMode}
+                  />
+                </Elements>
+              ) : (
+                <div className="mt-6 rounded-2xl border border-amber-300 bg-amber-50 p-6 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                  <h3 className="font-bold">Stripe configuration required</h3>
+                  <p className="mt-2 text-sm leading-6">
+                    Add a valid publishable key to{" "}
+                    <code>NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY</code>. No secret
+                    key belongs in this client.
+                  </p>
+                </div>
+              )}
+            </section>
+          )}{" "}
+          {step < 4 && (
+            <div className="mt-9 flex justify-between border-t border-border pt-5">
+              <Button
+                variant="ghost"
+                disabled={step === 0}
+                onClick={() => setStep(step - 1)}
+              >
+                <ChevronLeft size={17} />
+                Back
+              </Button>
+              {step === 3 ? (
+                <Button disabled={submitting} onClick={preparePayment}>
+                  {submitting
+                    ? "Confirming availability…"
+                    : "Continue to payment"}
+                  <ChevronRight size={17} />
+                </Button>
+              ) : (
+                <Button
+                  disabled={!canContinue}
+                  onClick={() => setStep(step + 1)}
+                >
+                  Continue
+                  <ChevronRight size={17} />
+                </Button>
+              )}
+            </div>
+          )}
+        </Card>
+        <aside>
+          <Card className="sticky top-24 p-6">
+            <div className="flex items-center gap-4">
+              <span className="grid size-14 place-items-center rounded-2xl bg-primary-soft text-primary">
+                <Stethoscope />
+              </span>
+              <div>
+                <p className="font-extrabold">{d.name}</p>
+                <p className="text-sm text-secondary">{d.specialization}</p>
+              </div>
+            </div>
+            <div className="mt-6 space-y-3 border-t border-border pt-5 text-sm">
+              <p className="flex justify-between">
+                <span className="text-muted-foreground">Date</span>
+                <b>{date ? formatDate(date) : "Not selected"}</b>
+              </p>
+              <p className="flex justify-between">
+                <span className="text-muted-foreground">Time</span>
+                <b>{time || "Not selected"}</b>
+              </p>
+              <p className="flex justify-between text-base">
+                <span className="text-muted-foreground">Fee</span>
+                <b className="text-primary">
+                  {formatCurrency(d.consultationFee)}
+                </b>
+              </p>
+            </div>
+          </Card>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
-function StepTitle({ icon: Icon, title, description }: { icon: typeof CalendarDays; title: string; description: string }) { return <div className="flex gap-4"><span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary"><Icon size={21} /></span><div><h2 className="text-xl font-extrabold">{title}</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">{description}</p></div></div>; }
-function Checkout({ appointmentId }: { appointmentId: string }) { const stripe = useStripe(); const elements = useElements(); const [busy, setBusy] = useState(false); const [message, setMessage] = useState(""); const pay = async () => { if (!stripe || !elements) return; setBusy(true); const result = await stripe.confirmPayment({ elements, confirmParams: { return_url: `${window.location.origin}/dashboard/appointments?payment=processing&appointment=${appointmentId}` }, redirect: "if_required" }); if (result.error) setMessage(result.error.message ?? "Payment could not be processed."); else setMessage("Payment submitted. We’ll update the appointment when the backend webhook confirms it."); setBusy(false); }; return <div className="mt-6"><PaymentElement /><Button className="mt-6 w-full" disabled={!stripe || busy} onClick={pay}>{busy ? "Processing…" : "Pay securely"}</Button>{message && <p role="status" className="mt-4 rounded-xl bg-muted p-4 text-sm">{message}</p>}</div>; }
+function StepTitle({
+  icon: Icon,
+  title,
+  description,
+}: {
+  icon: typeof CalendarDays;
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="flex gap-4">
+      <span className="grid size-11 shrink-0 place-items-center rounded-xl bg-primary-soft text-primary">
+        <Icon size={21} />
+      </span>
+      <div>
+        <h2 className="text-xl font-extrabold">{title}</h2>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          {description}
+        </p>
+      </div>
+    </div>
+  );
+}
+function Checkout({
+  appointmentId,
+  testMode,
+}: {
+  appointmentId: string;
+  testMode: boolean;
+}) {
+  const stripe = useStripe();
+  const elements = useElements();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const pay = async () => {
+    if (!stripe || !elements) return;
+    setBusy(true);
+    const result = await stripe.confirmPayment({
+      elements,
+      confirmParams: {
+        return_url: `${window.location.origin}/dashboard/appointments?payment=processing&appointment=${appointmentId}`,
+      },
+      redirect: "if_required",
+    });
+    if (result.error) {
+      setMessage(result.error.message ?? "Payment could not be processed.");
+    } else {
+      try {
+        const synced = await apiRequest<{
+          stripeStatus: string;
+          paymentStatus: string;
+          appointmentStatus: string;
+        }>(`/api/payments/${appointmentId}/sync`, { method: "POST" });
+        if (synced.paymentStatus === "paid") {
+          setMessage(
+            "Payment successful. Your appointment is now awaiting doctor confirmation.",
+          );
+          toast.success("Payment successful");
+        } else {
+          setMessage(
+            "Payment is still processing. Please check your appointments shortly.",
+          );
+        }
+      } catch {
+        setMessage(
+          "Payment submitted. We’ll update the appointment when the backend webhook confirms it.",
+        );
+      }
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="mt-6">
+      {testMode && (
+        <div className="mb-5 rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-100">
+          <p className="font-bold">Stripe sandbox payment</p>
+          <p className="mt-1 leading-6">
+            Use card <code>4242 4242 4242 4242</code>, any future expiry, and
+            any three-digit CVC. No real money is charged.
+          </p>
+        </div>
+      )}
+      <PaymentElement />
+      <Button className="mt-6 w-full" disabled={!stripe || busy} onClick={pay}>
+        {busy ? "Processing…" : "Pay securely"}
+      </Button>
+      {message && (
+        <p role="status" className="mt-4 rounded-xl bg-muted p-4 text-sm">
+          {message}
+        </p>
+      )}
+    </div>
+  );
+}
