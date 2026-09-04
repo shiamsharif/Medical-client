@@ -1,6 +1,12 @@
-const API_URL =
-  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
-  "http://localhost:5000";
+function apiUrl(path: string): URL {
+  const origin =
+    typeof window === "undefined"
+      ? (process.env.NEXT_PUBLIC_SITE_URL?.replace(/\/$/, "") ??
+        "http://localhost:3000")
+      : window.location.origin;
+
+  return new URL(path, `${origin}/`);
+}
 
 export class ApiError extends Error {
   constructor(
@@ -23,7 +29,7 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const url = new URL(`${API_URL}${path}`);
+  const url = apiUrl(path);
   Object.entries(options.query ?? {}).forEach(([key, value]) => {
     if (value !== undefined && value !== "")
       url.searchParams.set(key, String(value));
@@ -77,5 +83,3 @@ export async function apiRequest<T>(
   }
   return payload as T;
 }
-
-export { API_URL };

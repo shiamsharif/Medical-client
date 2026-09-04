@@ -50,7 +50,7 @@ Components call TanStack Query hooks, which call focused services, which use the
 
 ## Better Auth Authentication
 
-`src/lib/auth-client.ts` configures Better Auth against the separate Express backend. Email/password registration and login, Google OAuth, sign-out, session retrieval, and cookie-based persistence use Better Auth’s client API. Cross-origin calls include credentials so deployments can use the backend’s secure cookie and CORS policy. Successful password and Google flows pass through `/auth/complete`, which verifies or creates the separate MediCare application profile before entering the dashboard.
+`src/lib/auth-client.ts` uses the frontend origin for Better Auth. Next.js rewrites `/api/*` to the separate Express backend, keeping authentication cookies first-party even though the applications are deployed separately. Email/password registration and login, Google OAuth, sign-out, and session retrieval use Better Auth’s client API. Successful password and Google flows pass through `/auth/complete`, which verifies or creates the separate MediCare application profile before entering the dashboard.
 
 ## JWT Architecture
 
@@ -92,11 +92,12 @@ cp .env.sample .env
 ## Environment Variables
 
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:5000
+API_PROXY_TARGET=http://localhost:5000
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
 NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=your_stripe_publishable_key
 ```
 
-Every `NEXT_PUBLIC_*` value is visible in the browser. Never add database credentials, Better Auth secrets, OAuth client secrets, Stripe secret/webhook keys, email credentials, admin passwords, or cron secrets.
+`API_PROXY_TARGET` is read only by the Next.js server and should point to the Express API origin. Every `NEXT_PUBLIC_*` value is visible in the browser. Never add database credentials, Better Auth secrets, OAuth client secrets, Stripe secret/webhook keys, email credentials, admin passwords, or cron secrets.
 
 ## Local Development
 
@@ -104,7 +105,7 @@ Every `NEXT_PUBLIC_*` value is visible in the browser. Never add database creden
 npm run dev
 ```
 
-The Express backend must allow the client origin and support credentialed requests when cookie sessions are used.
+The Express backend must use `http://localhost:3000` for both `CLIENT_URL` and `BETTER_AUTH_URL`. Register `http://localhost:3000/api/auth/callback/google` as the local Google OAuth redirect URI.
 
 ## Production Build
 
