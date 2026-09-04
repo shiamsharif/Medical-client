@@ -50,7 +50,7 @@ Components call TanStack Query hooks, which call focused services, which use the
 
 ## Better Auth Authentication
 
-`src/lib/auth-client.ts` configures Better Auth against the separate Express backend. Email/password registration and login, Google OAuth, sign-out, session retrieval, and cookie-based persistence use Better Auth’s client API. Cross-origin calls include credentials so deployments can use the backend’s secure cookie and CORS policy.
+`src/lib/auth-client.ts` configures Better Auth against the separate Express backend. Email/password registration and login, Google OAuth, sign-out, session retrieval, and cookie-based persistence use Better Auth’s client API. Cross-origin calls include credentials so deployments can use the backend’s secure cookie and CORS policy. Successful password and Google flows pass through `/auth/complete`, which verifies or creates the separate MediCare application profile before entering the dashboard.
 
 ## JWT Architecture
 

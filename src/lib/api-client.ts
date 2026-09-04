@@ -17,35 +17,58 @@ type RequestOptions = Omit<RequestInit, "body"> & {
   accessToken?: string;
 };
 
-export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+export async function apiRequest<T>(
+  path: string,
+  options: RequestOptions = {},
+): Promise<T> {
   const url = new URL(`${API_URL}${path}`);
   Object.entries(options.query ?? {}).forEach(([key, value]) => {
-    if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
+    if (value !== undefined && value !== "")
+      url.searchParams.set(key, String(value));
   });
 
   const headers = new Headers(options.headers);
-  if (options.body !== undefined) headers.set("Content-Type", "application/json");
-  if (options.accessToken) headers.set("Authorization", `Bearer ${options.accessToken}`);
+  if (options.body !== undefined)
+    headers.set("Content-Type", "application/json");
+  if (options.accessToken)
+    headers.set("Authorization", `Bearer ${options.accessToken}`);
 
   let response: Response;
   try {
     response = await fetch(url, {
       ...options,
       headers,
-      body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      body:
+        options.body === undefined ? undefined : JSON.stringify(options.body),
       credentials: "include",
     });
   } catch {
-    throw new ApiError("We could not reach MediCare Connect. Please try again.", 0);
+    throw new ApiError(
+      "We could not reach MediCare Connect. Please try again.",
+      0,
+    );
   }
 
-  const payload: unknown = response.status === 204 ? null : await response.json().catch(() => null);
+  const payload: unknown =
+    response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
     const message =
-      typeof payload === "object" && payload && "message" in payload && typeof payload.message === "string"
+      typeof payload === "object" &&
+      payload &&
+      "message" in payload &&
+      typeof payload.message === "string"
         ? payload.message
         : "Something went wrong. Please try again.";
     throw new ApiError(message, response.status, payload);
+  }
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    "success" in payload &&
+    payload.success === true &&
+    "data" in payload
+  ) {
+    return payload.data as T;
   }
   return payload as T;
 }

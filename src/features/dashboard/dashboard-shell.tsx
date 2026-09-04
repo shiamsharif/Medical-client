@@ -1,21 +1,186 @@
 "use client";
 
-import { Bell, ChevronRight, HeartPulse, LogOut, Menu, PanelLeftClose, Search, X } from "lucide-react";
+import {
+  Bell,
+  ChevronRight,
+  HeartPulse,
+  LogOut,
+  Menu,
+  PanelLeftClose,
+  Search,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { dashboardNavigation } from "@/constants/navigation";
+import { ApiError } from "@/lib/api-client";
 import { signOut, useSession } from "@/lib/auth-client";
+import { useCurrentUser } from "@/lib/current-user";
 import { cn } from "@/lib/utils";
-import type { UserRole } from "@/types";
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
-  const { data: session, isPending } = useSession(); const pathname = usePathname(); const router = useRouter(); const [mobile, setMobile] = useState(false); const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => { if (!isPending && !session) router.replace(`/login?callbackURL=${encodeURIComponent(pathname)}`); }, [isPending, session, pathname, router]);
-  if (isPending || !session) return <div className="grid min-h-screen place-items-center bg-muted"><div className="text-center"><HeartPulse className="mx-auto animate-pulse text-primary" size={42} /><p className="mt-4 font-semibold text-muted-foreground">Restoring your secure session…</p></div></div>;
-  const role = ((session.user as typeof session.user & { role?: UserRole }).role ?? "patient") as UserRole;
+  const { data: session, isPending } = useSession();
+  const pathname = usePathname();
+  const router = useRouter();
+  const [mobile, setMobile] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const currentUser = useCurrentUser(Boolean(session));
+  useEffect(() => {
+    if (!isPending && !session)
+      router.replace(`/login?callbackURL=${encodeURIComponent(pathname)}`);
+  }, [isPending, session, pathname, router]);
+  useEffect(() => {
+    if (
+      currentUser.error instanceof ApiError &&
+      currentUser.error.status === 401
+    )
+      router.replace("/auth/complete");
+  }, [currentUser.error, router]);
+  if (isPending || !session || currentUser.isPending || !currentUser.data)
+    return (
+      <div className="grid min-h-screen place-items-center bg-muted">
+        <div className="text-center">
+          <HeartPulse
+            className="mx-auto animate-pulse text-primary"
+            size={42}
+          />
+          <p className="mt-4 font-semibold text-muted-foreground">
+            Restoring your secure session…
+          </p>
+        </div>
+      </div>
+    );
+  const role = currentUser.data.role;
   const nav = dashboardNavigation[role];
-  return <div className="min-h-screen bg-muted/60"><aside className={cn("fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-[#092d2b] text-white transition-transform lg:translate-x-0", mobile ? "translate-x-0" : "-translate-x-full", collapsed && "lg:w-20")}><div className="flex h-18 items-center justify-between border-b border-white/10 px-5"><Link href="/" className="flex items-center gap-2 font-extrabold"><span className="grid size-10 place-items-center rounded-xl bg-primary"><HeartPulse /></span>{!collapsed && <span>MediCare <span className="text-teal-300">Connect</span></span>}</Link><Button className="text-white lg:hidden" variant="ghost" size="icon" onClick={() => setMobile(false)}><X /></Button></div><div className="m-3 rounded-2xl bg-white/8 p-3"><div className="flex items-center gap-3"><span className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-300/15 font-bold text-teal-200">{session.user.name?.slice(0, 1)}</span>{!collapsed && <div className="min-w-0"><p className="truncate text-sm font-bold">{session.user.name}</p><p className="mt-0.5 text-xs capitalize text-teal-100/60">{role} account</p></div>}</div></div><nav className="flex-1 space-y-1 overflow-y-auto p-3">{nav.map(({ label, href, icon: Icon }) => <Link key={href} href={href} onClick={() => setMobile(false)} title={label} className={cn("flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-teal-50/65 transition hover:bg-white/8 hover:text-white", pathname === href && "bg-primary text-white")}><Icon size={19} className="shrink-0" />{!collapsed && label}</Link>)}</nav><div className="border-t border-white/10 p-3"><button onClick={async () => { await signOut(); router.push("/"); }} className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-teal-50/65 hover:bg-white/8 hover:text-white"><LogOut size={19} />{!collapsed && "Sign out"}</button></div></aside><div className={cn("transition-[padding] lg:pl-72", collapsed && "lg:pl-20")}><header className="sticky top-0 z-40 flex h-18 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur-xl sm:px-6"><Button className="lg:hidden" size="icon" variant="ghost" onClick={() => setMobile(true)}><Menu /></Button><Button className="hidden lg:inline-flex" size="icon" variant="ghost" onClick={() => setCollapsed(!collapsed)}><PanelLeftClose className={collapsed ? "rotate-180" : ""} /></Button><div className="hidden max-w-sm flex-1 items-center rounded-xl bg-muted px-3 sm:flex"><Search size={17} className="text-muted-foreground" /><input className="min-h-10 flex-1 bg-transparent px-2 text-sm outline-none" placeholder="Search dashboard" aria-label="Search dashboard" /></div><div className="ml-auto flex items-center gap-1"><ThemeToggle /><Button size="icon" variant="ghost" aria-label="Notifications"><Bell size={19} /></Button></div></header><div className="px-4 py-6 sm:px-6 lg:px-8"><div className="mb-6 flex items-center gap-2 text-xs text-muted-foreground"><Link href="/dashboard">Dashboard</Link>{pathname !== "/dashboard" && <><ChevronRight size={13} /><span className="capitalize text-foreground">{pathname.split("/").pop()?.replaceAll("-", " ")}</span></>}</div>{children}</div></div></div>;
+  return (
+    <div className="min-h-screen bg-muted/60">
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-50 flex w-72 flex-col bg-[#092d2b] text-white transition-transform lg:translate-x-0",
+          mobile ? "translate-x-0" : "-translate-x-full",
+          collapsed && "lg:w-20",
+        )}
+      >
+        <div className="flex h-18 items-center justify-between border-b border-white/10 px-5">
+          <Link href="/" className="flex items-center gap-2 font-extrabold">
+            <span className="grid size-10 place-items-center rounded-xl bg-primary">
+              <HeartPulse />
+            </span>
+            {!collapsed && (
+              <span>
+                MediCare <span className="text-teal-300">Connect</span>
+              </span>
+            )}
+          </Link>
+          <Button
+            className="text-white lg:hidden"
+            variant="ghost"
+            size="icon"
+            onClick={() => setMobile(false)}
+          >
+            <X />
+          </Button>
+        </div>
+        <div className="m-3 rounded-2xl bg-white/8 p-3">
+          <div className="flex items-center gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-300/15 font-bold text-teal-200">
+              {session.user.name?.slice(0, 1)}
+            </span>
+            {!collapsed && (
+              <div className="min-w-0">
+                <p className="truncate text-sm font-bold">
+                  {session.user.name}
+                </p>
+                <p className="mt-0.5 text-xs capitalize text-teal-100/60">
+                  {role} account
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+          {nav.map(({ label, href, icon: Icon }) => (
+            <Link
+              key={href}
+              href={href}
+              onClick={() => setMobile(false)}
+              title={label}
+              className={cn(
+                "flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-teal-50/65 transition hover:bg-white/8 hover:text-white",
+                pathname === href && "bg-primary text-white",
+              )}
+            >
+              <Icon size={19} className="shrink-0" />
+              {!collapsed && label}
+            </Link>
+          ))}
+        </nav>
+        <div className="border-t border-white/10 p-3">
+          <button
+            onClick={async () => {
+              await signOut();
+              router.push("/");
+            }}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-teal-50/65 hover:bg-white/8 hover:text-white"
+          >
+            <LogOut size={19} />
+            {!collapsed && "Sign out"}
+          </button>
+        </div>
+      </aside>
+      <div
+        className={cn("transition-[padding] lg:pl-72", collapsed && "lg:pl-20")}
+      >
+        <header className="sticky top-0 z-40 flex h-18 items-center gap-3 border-b border-border bg-surface/90 px-4 backdrop-blur-xl sm:px-6">
+          <Button
+            className="lg:hidden"
+            size="icon"
+            variant="ghost"
+            onClick={() => setMobile(true)}
+          >
+            <Menu />
+          </Button>
+          <Button
+            className="hidden lg:inline-flex"
+            size="icon"
+            variant="ghost"
+            onClick={() => setCollapsed(!collapsed)}
+          >
+            <PanelLeftClose className={collapsed ? "rotate-180" : ""} />
+          </Button>
+          <div className="hidden max-w-sm flex-1 items-center rounded-xl bg-muted px-3 sm:flex">
+            <Search size={17} className="text-muted-foreground" />
+            <input
+              className="min-h-10 flex-1 bg-transparent px-2 text-sm outline-none"
+              placeholder="Search dashboard"
+              aria-label="Search dashboard"
+            />
+          </div>
+          <div className="ml-auto flex items-center gap-1">
+            <ThemeToggle />
+            <Button size="icon" variant="ghost" aria-label="Notifications">
+              <Bell size={19} />
+            </Button>
+          </div>
+        </header>
+        <div className="px-4 py-6 sm:px-6 lg:px-8">
+          <div className="mb-6 flex items-center gap-2 text-xs text-muted-foreground">
+            <Link href="/dashboard">Dashboard</Link>
+            {pathname !== "/dashboard" && (
+              <>
+                <ChevronRight size={13} />
+                <span className="capitalize text-foreground">
+                  {pathname.split("/").pop()?.replaceAll("-", " ")}
+                </span>
+              </>
+            )}
+          </div>
+          {children}
+        </div>
+      </div>
+    </div>
+  );
 }
