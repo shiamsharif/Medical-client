@@ -22,12 +22,56 @@ export function AuthCompletion({
   oauthError?: string;
 }) {
   const router = useRouter();
-  const { data: session, isPending } = useSession();
+  const {
+    data: session,
+    error: sessionError,
+    isPending,
+    isRefetching,
+    refetch,
+  } = useSession();
   const attempted = useRef(false);
   const [role, setRole] = useState<OnboardingRole>(initialRole ?? "patient");
   const [needsRole, setNeedsRole] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [hasRefreshedSession, setHasRefreshedSession] = useState(false);
   const [error, setError] = useState<string>();
+  const sessionRef = useRef(session);
+  const sessionCheckGeneration = useRef(0);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
+  const refreshSession = useCallback(async () => {
+    const generation = ++sessionCheckGeneration.current;
+
+    // Defer the state transition so effect-driven verification does not cause
+    // a synchronous render cascade during mount.
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    if (generation !== sessionCheckGeneration.current) return;
+    setHasRefreshedSession(false);
+
+    // Let useSession's initial request finish first, then retry transient
+    // serverless cold starts without trusting Better Auth's cookie cache.
+    for (const delay of [150, 300, 600]) {
+      await new Promise((resolve) => window.setTimeout(resolve, delay));
+      if (generation !== sessionCheckGeneration.current) return;
+      if (sessionRef.current) break;
+      await refetch({ query: { disableCookieCache: true } });
+    }
+
+    if (generation === sessionCheckGeneration.current) {
+      setHasRefreshedSession(true);
+    }
+  }, [refetch]);
+
+  useEffect(() => {
+    if (!oauthError) void refreshSession();
+
+    return () => {
+      sessionCheckGeneration.current += 1;
+    };
+  }, [oauthError, refreshSession]);
 
   const saveOnboarding = useCallback(
     async (selectedRole: OnboardingRole) => {
@@ -89,15 +133,34 @@ export function AuthCompletion({
     );
   }
 
-  if (!isPending && !session) {
+  if (hasRefreshedSession && !isPending && !isRefetching && !session) {
+    const verificationFailed = Boolean(sessionError);
+
     return (
       <CompletionCard
-        title="Your session was not created"
-        description="Please sign in again to continue."
+        title={
+          verificationFailed
+            ? "Unable to verify your session"
+            : "No active session was found"
+        }
+        description={
+          sessionError?.message ??
+          "Please return to sign in and start a new sign-in attempt. Refreshing this page cannot create a new session."
+        }
       >
-        <Button asChild className="w-full">
-          <Link href="/login">Return to sign in</Link>
-        </Button>
+        <div className="space-y-3">
+          <Button
+            className="w-full"
+            onClick={() => {
+              void refreshSession();
+            }}
+          >
+            Retry session
+          </Button>
+          <Button asChild className="w-full" variant="outline">
+            <Link href="/login">Return to sign in</Link>
+          </Button>
+        </div>
       </CompletionCard>
     );
   }

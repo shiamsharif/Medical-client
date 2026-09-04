@@ -3,7 +3,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, EyeOff, HeartPulse } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
@@ -22,7 +21,6 @@ export function AuthForm({ mode }: { mode: "login" | "register" }) {
 }
 
 function LoginForm() {
-  const router = useRouter();
   const [show, setShow] = useState(false);
   const {
     register,
@@ -39,7 +37,7 @@ function LoginForm() {
       return;
     }
     toast.success("Welcome back");
-    router.replace("/auth/complete");
+    window.location.replace("/auth/complete");
   });
   return (
     <form onSubmit={submit} className="space-y-5" noValidate>
@@ -94,7 +92,6 @@ function LoginForm() {
 }
 
 function RegisterForm() {
-  const router = useRouter();
   const [show, setShow] = useState(false);
   const {
     register,
@@ -117,7 +114,7 @@ function RegisterForm() {
         return;
       }
       toast.success("Your secure account was created");
-      router.replace(`/auth/complete?role=${selectedRole}`);
+      window.location.replace(`/auth/complete?role=${selectedRole}`);
     },
   );
   return (
