@@ -39,6 +39,7 @@ export function AuthCompletion({
           role: selectedRole,
           name: session.user.name,
           email: session.user.email,
+          ...(session.user.image ? { image: session.user.image } : {}),
         });
         router.replace("/dashboard");
       } catch (cause) {

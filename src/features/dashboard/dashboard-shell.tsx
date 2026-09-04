@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- User avatars can be Google-hosted or uploaded data URLs. */
+
 import {
   Bell,
   ChevronRight,
@@ -87,12 +89,20 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         <div className="m-3 rounded-2xl bg-white/8 p-3">
           <div className="flex items-center gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-teal-300/15 font-bold text-teal-200">
-              {session.user.name?.slice(0, 1)}
+              {currentUser.data.image ?? session.user.image ? (
+                <img
+                  className="size-full rounded-xl object-cover"
+                  src={currentUser.data.image ?? session.user.image ?? ""}
+                  alt=""
+                />
+              ) : (
+                currentUser.data.name.slice(0, 1)
+              )}
             </span>
             {!collapsed && (
               <div className="min-w-0">
                 <p className="truncate text-sm font-bold">
-                  {session.user.name}
+                  {currentUser.data.name}
                 </p>
                 <p className="mt-0.5 text-xs capitalize text-teal-100/60">
                   {role} account

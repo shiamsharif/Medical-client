@@ -9,6 +9,10 @@ export interface CurrentUser {
   name: string;
   email: string;
   image?: string;
+  phone?: string;
+  gender?: string;
+  location?: string;
+  bloodGroup?: string;
   role: UserRole;
   status: string;
 }
@@ -21,6 +25,7 @@ export function completeOnboarding(input: {
   role: OnboardingRole;
   name: string;
   email: string;
+  image?: string;
 }) {
   return apiRequest<CurrentUser>("/api/users/onboarding", {
     method: "POST",

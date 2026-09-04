@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element -- Profile images can be Google-hosted or user-uploaded data URLs. */
+
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Bar,
@@ -30,6 +32,7 @@ import {
   Users,
 } from "lucide-react";
 import { useFieldArray, useForm } from "react-hook-form";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -44,7 +47,7 @@ import {
 } from "@/components/ui/core";
 import { apiRequest } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
-import { useCurrentUser } from "@/lib/current-user";
+import { useCurrentUser, type CurrentUser } from "@/lib/current-user";
 import { formatCurrency, formatDate } from "@/lib/utils";
 import {
   mapDoctor,
@@ -219,8 +222,8 @@ export function DashboardContent({
       <div className="mb-7">
         <h1 className="text-3xl font-extrabold tracking-tight">
           {title}
-          {section === "overview" && session?.user.name
-            ? `, ${session.user.name.split(" ")[0]}`
+          {section === "overview" && currentUser?.name
+            ? `, ${currentUser.name}`
             : ""}
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>
@@ -922,132 +925,344 @@ function Schedule() {
   );
 }
 
+type ProfileFormValues = {
+  name: string;
+  phone: string;
+  gender: string;
+  location: string;
+  bloodGroup: string;
+  hospital: string;
+  experience?: number;
+  consultationFee?: number;
+  qualifications: string;
+  biography: string;
+};
+
 function Profile({ role }: { role: UserRole }) {
+  const client = useQueryClient();
+  const { data: session } = useSession();
+  const currentUser = useCurrentUser();
+  const doctorProfile = useQuery({
+    queryKey: ["doctor-profile", "mine"],
+    queryFn: ({ signal }) => apiRequest<ApiDoctor>("/api/doctors/me/profile", { signal }),
+    enabled: role === "doctor",
+  });
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [imagePreview, setImagePreview] = useState<string>();
+  const [isUploading, setIsUploading] = useState(false);
   const {
     register,
     handleSubmit,
+    reset,
     formState: { isSubmitting },
-  } = useForm<{
-    name?: string;
-    phone?: string;
-    gender?: string;
-    hospital?: string;
-    experience?: number;
-    consultationFee?: number;
-    qualifications?: string;
-    biography?: string;
-  }>();
+  } = useForm<ProfileFormValues>({
+    defaultValues: {
+      name: "",
+      phone: "",
+      gender: "",
+      location: "",
+      bloodGroup: "",
+      hospital: "",
+      qualifications: "",
+      biography: "",
+    },
+  });
+
+  useEffect(() => {
+    if (!currentUser.data) return;
+    const doctor = doctorProfile.data;
+    reset({
+      name: currentUser.data.name,
+      phone: currentUser.data.phone ?? "",
+      gender: currentUser.data.gender ?? "",
+      location: currentUser.data.location ?? "",
+      bloodGroup: currentUser.data.bloodGroup ?? "",
+      hospital: doctor?.hospitalName ?? "",
+      experience: doctor?.experience,
+      consultationFee: doctor?.consultationFee,
+      qualifications: doctor?.qualifications.join(", ") ?? "",
+      biography: doctor?.biography ?? "",
+    });
+  }, [currentUser.data, doctorProfile.data, reset]);
+
+  const uploadPhoto = async (file?: File) => {
+    if (!file) return;
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      toast.error("Choose a JPG, PNG, or WebP image.");
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("Profile photos must be smaller than 5 MB.");
+      return;
+    }
+    setIsUploading(true);
+    try {
+      const image = await resizeProfileImage(file);
+      const updated = await apiRequest<CurrentUser>("/api/users/me", {
+        method: "PATCH",
+        body: { image },
+      });
+      setImagePreview(updated.image ?? image);
+      client.setQueryData(["current-user"], updated);
+      toast.success("Profile photo updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not upload the photo");
+    } finally {
+      setIsUploading(false);
+      if (fileInput.current) fileInput.current.value = "";
+    }
+  };
+
+  const initials = (currentUser.data?.name ?? session?.user.name ?? "MC")
+    .split(" ")
+    .map((part) => part[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
+  const displayImage = imagePreview ?? currentUser.data?.image ?? session?.user.image;
+
+  return (
+    <div className="grid max-w-3xl gap-6">
+      <form
+        onSubmit={handleSubmit(async (values) => {
+          try {
+            const userFields = Object.fromEntries(
+              Object.entries({
+                name: values.name,
+                phone: values.phone,
+                gender: values.gender,
+                location: values.location,
+                bloodGroup: values.bloodGroup,
+              }).filter(([, value]) => value !== ""),
+            );
+            const updated = await apiRequest<CurrentUser>("/api/users/me", {
+              method: "PATCH",
+              body: userFields,
+            });
+            client.setQueryData(["current-user"], updated);
+            if (role === "doctor") {
+              const doctorFields = Object.fromEntries(
+                Object.entries({
+                  hospitalName: values.hospital,
+                  experience: values.experience,
+                  consultationFee: values.consultationFee,
+                  qualifications: values.qualifications
+                    .split(",")
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                  biography: values.biography,
+                }).filter(([, value]) => {
+                  if (Array.isArray(value)) return value.length > 0;
+                  if (typeof value === "number") return Number.isFinite(value);
+                  return value !== undefined && value !== "";
+                }),
+              );
+              if (Object.keys(doctorFields).length) {
+                await apiRequest("/api/doctors/me/profile", {
+                  method: "PATCH",
+                  body: doctorFields,
+                });
+                await client.invalidateQueries({ queryKey: ["doctor-profile", "mine"] });
+              }
+            }
+            toast.success("Profile updated");
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Could not update profile");
+          }
+        })}
+      >
+        <Card className="p-6 sm:p-8">
+          <div className="flex items-center gap-5 border-b border-border pb-6">
+            <span className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-2xl bg-primary-soft text-2xl font-extrabold text-primary">
+              {displayImage ? (
+                <img className="size-full object-cover" src={displayImage} alt="Profile" />
+              ) : (
+                initials
+              )}
+            </span>
+            <div>
+              <h2 className="font-extrabold">Profile photo</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Your Google photo is used initially. Upload a JPG, PNG, or WebP smaller than 5 MB anytime.
+              </p>
+              <input
+                ref={fileInput}
+                className="sr-only"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) => void uploadPhoto(event.target.files?.[0])}
+              />
+              <Button
+                className="mt-3"
+                size="sm"
+                type="button"
+                variant="outline"
+                disabled={isUploading}
+                onClick={() => fileInput.current?.click()}
+              >
+                {isUploading ? "Uploading…" : "Change photo"}
+              </Button>
+            </div>
+          </div>
+          <div className="mt-6 grid gap-5 sm:grid-cols-2">
+            <div>
+              <Label>Full name</Label>
+              <Input required minLength={2} {...register("name")} />
+            </div>
+            <div>
+              <Label>Email</Label>
+              <Input value={currentUser.data?.email ?? session?.user.email ?? ""} disabled />
+            </div>
+            <div>
+              <Label>Phone</Label>
+              <Input type="tel" minLength={7} {...register("phone")} />
+            </div>
+            <div>
+              <Label>Gender</Label>
+              <Select {...register("gender")}>
+                <option value="">Prefer not to say</option>
+                <option>Female</option>
+                <option>Male</option>
+                <option>Other</option>
+              </Select>
+            </div>
+            <div>
+              <Label>Location</Label>
+              <Input placeholder="City, district, or address" {...register("location")} />
+            </div>
+            <div>
+              <Label>Blood group</Label>
+              <Select {...register("bloodGroup")}>
+                <option value="">Select blood group</option>
+                {["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"].map((group) => (
+                  <option key={group}>{group}</option>
+                ))}
+              </Select>
+            </div>
+            {role === "doctor" && (
+              <>
+                <div>
+                  <Label>Hospital</Label>
+                  <Input {...register("hospital")} />
+                </div>
+                <div>
+                  <Label>Experience (years)</Label>
+                  <Input type="number" min="0" {...register("experience", { valueAsNumber: true })} />
+                </div>
+                <div>
+                  <Label>Consultation fee</Label>
+                  <Input type="number" min="0" {...register("consultationFee", { valueAsNumber: true })} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Qualifications</Label>
+                  <Input {...register("qualifications")} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label>Biography</Label>
+                  <Textarea {...register("biography")} />
+                </div>
+              </>
+            )}
+          </div>
+          <p className="mt-5 text-xs text-muted-foreground">
+            Email changes require a separate verification flow and are disabled here.
+          </p>
+          <Button className="mt-6" disabled={isSubmitting}>
+            {isSubmitting ? "Saving…" : "Save changes"}
+          </Button>
+        </Card>
+      </form>
+      <PasswordForm />
+    </div>
+  );
+}
+
+function PasswordForm() {
+  const {
+    register,
+    handleSubmit,
+    reset,
+    formState: { isSubmitting },
+  } = useForm<{ currentPassword: string; newPassword: string; confirmPassword: string }>({
+    defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
+  });
   return (
     <form
       onSubmit={handleSubmit(async (values) => {
+        if (values.newPassword !== values.confirmPassword) {
+          toast.error("New passwords do not match");
+          return;
+        }
+        if (
+          values.newPassword.length < 8 ||
+          !/\d/.test(values.newPassword) ||
+          !/[^A-Za-z0-9]/.test(values.newPassword)
+        ) {
+          toast.error("Use 8+ characters with a number and special character");
+          return;
+        }
         try {
-          const userFields = Object.fromEntries(
-            Object.entries({ name: values.name, phone: values.phone, gender: values.gender })
-              .filter(([, value]) => value !== undefined && value !== ""),
-          );
-          if (Object.keys(userFields).length) {
-            await apiRequest("/api/users/me", { method: "PATCH", body: userFields });
-          }
-          if (role === "doctor") {
-            const doctorFields = Object.fromEntries(
-              Object.entries({
-                hospitalName: values.hospital,
-                experience: values.experience,
-                consultationFee: values.consultationFee,
-                qualifications: values.qualifications
-                  ?.split(",")
-                  .map((item) => item.trim())
-                  .filter(Boolean),
-                biography: values.biography,
-              }).filter(([, value]) => {
-                if (Array.isArray(value)) return value.length > 0;
-                if (typeof value === "number") return Number.isFinite(value);
-                return value !== undefined && value !== "";
-              }),
-            );
-            if (Object.keys(doctorFields).length) {
-              await apiRequest("/api/doctors/me/profile", {
-                method: "PATCH",
-                body: doctorFields,
-              });
-            }
-          }
-          toast.success("Profile updated");
-        } catch (e) {
-          toast.error(
-            e instanceof Error ? e.message : "Could not update profile",
-          );
+          await apiRequest("/api/users/password", {
+            method: "POST",
+            body: {
+              ...(values.currentPassword ? { currentPassword: values.currentPassword } : {}),
+              newPassword: values.newPassword,
+            },
+          });
+          reset();
+          toast.success(values.currentPassword ? "Password changed" : "Password added to your account");
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : "Could not update password");
         }
       })}
     >
-      <Card className="max-w-3xl p-6 sm:p-8">
-        <div className="flex items-center gap-5 border-b border-border pb-6">
-          <span className="grid size-20 place-items-center rounded-2xl bg-primary-soft text-2xl font-extrabold text-primary">
-            MC
-          </span>
-          <div>
-            <h2 className="font-extrabold">Profile photo</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Use a clear image smaller than 5 MB.
-            </p>
-            <Button className="mt-3" size="sm" type="button" variant="outline">
-              Upload photo
-            </Button>
-          </div>
-        </div>
-        <div className="mt-6 grid gap-5 sm:grid-cols-2">
-          <div>
-            <Label>Full name</Label>
-            <Input {...register("name")} />
-          </div>
-          <div>
-            <Label>Phone</Label>
-            <Input type="tel" {...register("phone")} />
-          </div>
-          <div>
-            <Label>Gender</Label>
-            <Select {...register("gender")}>
-              <option value="">Prefer not to say</option>
-              <option>Female</option>
-              <option>Male</option>
-              <option>Other</option>
-            </Select>
-          </div>
-          {role === "doctor" && (
-            <>
-              <div>
-                <Label>Hospital</Label>
-                <Input {...register("hospital")} />
-              </div>
-              <div>
-                <Label>Experience (years)</Label>
-                <Input type="number" min="0" {...register("experience", { valueAsNumber: true })} />
-              </div>
-              <div>
-                <Label>Consultation fee</Label>
-                <Input type="number" min="0" {...register("consultationFee", { valueAsNumber: true })} />
-              </div>
-              <div className="sm:col-span-2">
-                <Label>Qualifications</Label>
-                <Input {...register("qualifications")} />
-              </div>
-              <div className="sm:col-span-2">
-                <Label>Biography</Label>
-                <Textarea {...register("biography")} />
-              </div>
-            </>
-          )}
-        </div>
-        <p className="mt-5 text-xs text-muted-foreground">
-          Email changes require the secure Better Auth verification flow and are
-          not handled by this form.
+      <Card className="p-6 sm:p-8">
+        <h2 className="text-lg font-extrabold">Password and security</h2>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          For a Google-only account, leave current password empty to add a password. Otherwise enter your existing password.
         </p>
+        <div className="mt-5 grid gap-5 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Label>Current password</Label>
+            <Input type="password" autoComplete="current-password" {...register("currentPassword")} />
+          </div>
+          <div>
+            <Label>New password</Label>
+            <Input type="password" autoComplete="new-password" required {...register("newPassword")} />
+          </div>
+          <div>
+            <Label>Confirm new password</Label>
+            <Input type="password" autoComplete="new-password" required {...register("confirmPassword")} />
+          </div>
+        </div>
         <Button className="mt-6" disabled={isSubmitting}>
-          {isSubmitting ? "Saving…" : "Save changes"}
+          {isSubmitting ? "Updating…" : "Update password"}
         </Button>
       </Card>
     </form>
   );
+}
+
+async function resizeProfileImage(file: File): Promise<string> {
+  const source = URL.createObjectURL(file);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("The selected image could not be read"));
+      element.src = source;
+    });
+    const scale = Math.min(1, 512 / Math.max(image.naturalWidth, image.naturalHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("Image processing is unavailable in this browser");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/webp", 0.82);
+  } finally {
+    URL.revokeObjectURL(source);
+  }
 }
 
 function UsersPanel() {

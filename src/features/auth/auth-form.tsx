@@ -161,7 +161,7 @@ function RegisterForm() {
           </button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          6+ characters, including a number and a special character.
+          8+ characters, including a number and a special character.
         </p>
       </Field>
       <label className="flex gap-3 text-sm text-muted-foreground">
