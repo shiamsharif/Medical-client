@@ -1,4 +1,6 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ?? "";
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "") ??
+  "http://localhost:5000";
 
 export class ApiError extends Error {
   constructor(
@@ -68,6 +70,9 @@ export async function apiRequest<T>(
     payload.success === true &&
     "data" in payload
   ) {
+    if ("meta" in payload) {
+      return { data: payload.data, meta: payload.meta } as T;
+    }
     return payload.data as T;
   }
   return payload as T;

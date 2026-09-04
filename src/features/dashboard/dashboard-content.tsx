@@ -30,6 +30,7 @@ import {
   Users,
 } from "lucide-react";
 import { useFieldArray, useForm } from "react-hook-form";
+import Link from "next/link";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -45,6 +46,10 @@ import { apiRequest } from "@/lib/api-client";
 import { useSession } from "@/lib/auth-client";
 import { useCurrentUser } from "@/lib/current-user";
 import { formatCurrency, formatDate } from "@/lib/utils";
+import {
+  mapDoctor,
+  type ApiDoctor,
+} from "@/services/healthcare-service";
 import type { Appointment, Doctor, Paginated, UserRole } from "@/types";
 
 interface DashboardSummary {
@@ -76,6 +81,80 @@ interface UserRecord {
   email: string;
   role: UserRole;
   status: string;
+}
+
+interface ApiAppointment {
+  _id: string;
+  doctorId: string;
+  patientId: string;
+  doctorName?: string;
+  patientName?: string;
+  specialization?: string;
+  appointmentDate: string;
+  appointmentTime: string;
+  appointmentStatus: string;
+  paymentStatus: Appointment["paymentStatus"];
+}
+interface ApiPayment {
+  _id: string;
+  transactionId?: string;
+  stripePaymentIntentId: string;
+  patientId: string;
+  doctorId: string;
+  patientName?: string;
+  doctorName?: string;
+  amount: number;
+  paymentStatus: string;
+  createdAt: string;
+}
+interface ApiUser {
+  _id: string;
+  name: string;
+  email: string;
+  role: UserRole;
+  status: string;
+}
+interface ApiSchedule {
+  _id: string;
+  day: string;
+  startTime: string;
+  endTime: string;
+  slotDuration: number;
+  active: boolean;
+}
+interface ApiReview {
+  _id: string;
+  rating: number;
+  reviewText: string;
+  createdAt: string;
+}
+interface ApiPrescription {
+  _id: string;
+  diagnosis: string;
+  medications: { name: string; dosage: string; frequency: string; duration: string }[];
+  notes?: string;
+  createdAt: string;
+}
+
+function shortId(value: string) {
+  return value ? value.slice(-6) : "unknown";
+}
+
+function mapAppointment(value: ApiAppointment): Appointment {
+  const status =
+    value.appointmentStatus === "accepted"
+      ? "confirmed"
+      : value.appointmentStatus;
+  return {
+    id: value._id,
+    doctorName: value.doctorName ?? `Doctor #${shortId(value.doctorId)}`,
+    patientName: value.patientName ?? `Patient #${shortId(value.patientId)}`,
+    specialization: value.specialization ?? "—",
+    date: value.appointmentDate,
+    time: value.appointmentTime,
+    status: status as Appointment["status"],
+    paymentStatus: value.paymentStatus,
+  };
 }
 
 export function DashboardContent({
@@ -151,7 +230,7 @@ export function DashboardContent({
       ) : section === "appointments" || section === "requests" ? (
         <Appointments role={role} />
       ) : section === "payments" ? (
-        <Payments />
+        <Payments role={role} />
       ) : section === "favorites" ? (
         <Favorites />
       ) : section === "reviews" ? (
@@ -181,10 +260,69 @@ export function DashboardContent({
 function Overview({ role }: { role: UserRole }) {
   const q = useQuery({
     queryKey: ["dashboard-summary", role],
-    queryFn: ({ signal }) =>
-      apiRequest<DashboardSummary>(`/api/dashboard/${role}/summary`, {
-        signal,
-      }),
+    queryFn: async ({ signal }): Promise<DashboardSummary> => {
+      if (role === "patient") {
+        const value = await apiRequest<{
+          upcomingAppointments: ApiAppointment[];
+          historyCount: number;
+          totalPaidAmount: number;
+          favoriteDoctorsCount: number;
+        }>("/api/analytics/patient", { signal });
+        return {
+          metrics: [
+            { label: "Upcoming appointments", value: value.upcomingAppointments.length },
+            { label: "Past appointments", value: value.historyCount },
+            { label: "Total paid", value: formatCurrency(value.totalPaidAmount) },
+            { label: "Favorite doctors", value: value.favoriteDoctorsCount },
+          ],
+          recentActivity: value.upcomingAppointments.map((item) => ({
+            id: item._id,
+            title: "Upcoming appointment",
+            detail: `${item.appointmentDate} at ${item.appointmentTime}`,
+            createdAt: item.appointmentDate,
+          })),
+        } satisfies DashboardSummary;
+      }
+      if (role === "doctor") {
+        const value = await apiRequest<{
+          totalUniquePatients: number;
+          todayAppointments: number;
+          pendingRequests: number;
+          completedAppointments: number;
+          reviewsReceived: number;
+          averageRating: number;
+        }>("/api/analytics/doctor", { signal });
+        return {
+          metrics: [
+            { label: "Patients", value: value.totalUniquePatients },
+            { label: "Appointments today", value: value.todayAppointments },
+            { label: "Pending requests", value: value.pendingRequests },
+            { label: "Average rating", value: value.averageRating },
+          ],
+          recentActivity: [],
+        } satisfies DashboardSummary;
+      }
+      const value = await apiRequest<{
+        totalPatients: number;
+        totalDoctors: number;
+        totalAppointments: number;
+        revenueOverTime: { revenue: number }[];
+      }>("/api/analytics/admin", { signal });
+      return {
+        metrics: [
+          { label: "Patients", value: value.totalPatients },
+          { label: "Doctors", value: value.totalDoctors },
+          { label: "Appointments", value: value.totalAppointments },
+          {
+            label: "Recorded revenue",
+            value: formatCurrency(
+              value.revenueOverTime.reduce((sum, item) => sum + item.revenue, 0),
+            ),
+          },
+        ],
+        recentActivity: [],
+      } satisfies DashboardSummary;
+    },
   });
   const icons = [CalendarCheck, Clock3, CircleDollarSign, Heart, Users, Star];
   if (q.isPending) return <GridSkeleton />;
@@ -246,23 +384,32 @@ function Appointments({ role }: { role: UserRole }) {
   const client = useQueryClient();
   const q = useQuery({
     queryKey: ["appointments", role],
-    queryFn: ({ signal }) =>
-      apiRequest<Paginated<Appointment>>(
+    queryFn: async ({ signal }) => {
+      const value = await apiRequest<Paginated<ApiAppointment>>(
         role === "admin"
           ? "/api/admin/appointments"
           : role === "doctor"
-            ? "/api/doctor/appointments"
-            : "/api/appointments/me",
+            ? "/api/appointments/assigned"
+            : "/api/appointments/mine",
         { query: { page: 1, limit: 20 }, signal },
-      ),
+      );
+      return { ...value, data: value.data.map(mapAppointment) };
+    },
   });
   const action = async (id: string, status: string) => {
     if (!window.confirm(`Confirm changing this appointment to ${status}?`))
       return;
     try {
-      await apiRequest(`/api/appointments/${id}/status`, {
+      const endpoint =
+        status === "confirmed"
+          ? "accept"
+          : status === "cancelled"
+            ? "cancel"
+            : status === "completed"
+              ? "complete"
+              : "reject";
+      await apiRequest(`/api/appointments/${id}/${endpoint}`, {
         method: "PATCH",
-        body: { status },
       });
       toast.success("Appointment updated");
       client.invalidateQueries({ queryKey: ["appointments"] });
@@ -342,14 +489,30 @@ function Appointments({ role }: { role: UserRole }) {
   );
 }
 
-function Payments() {
+function Payments({ role }: { role: UserRole }) {
   const q = useQuery({
-    queryKey: ["payments"],
-    queryFn: ({ signal }) =>
-      apiRequest<Paginated<Payment>>("/api/payments", {
+    queryKey: ["payments", role],
+    queryFn: async ({ signal }) => {
+      const value = await apiRequest<Paginated<ApiPayment>>(
+        role === "admin" ? "/api/admin/payments" : "/api/payments/mine",
+        {
         query: { page: 1, limit: 20 },
         signal,
-      }),
+        },
+      );
+      return {
+        ...value,
+        data: value.data.map((payment) => ({
+          id: payment._id,
+          transactionId: payment.transactionId ?? payment.stripePaymentIntentId,
+          patientName: payment.patientName ?? `Patient #${shortId(payment.patientId)}`,
+          doctorName: payment.doctorName ?? `Doctor #${shortId(payment.doctorId)}`,
+          amount: payment.amount,
+          status: payment.paymentStatus,
+          createdAt: payment.createdAt,
+        })),
+      };
+    },
   });
   if (q.isPending) return <TableSkeleton />;
   return (
@@ -374,9 +537,13 @@ function Payments() {
 }
 
 function Favorites() {
+  const client = useQueryClient();
   const q = useQuery({
     queryKey: ["favorites"],
-    queryFn: ({ signal }) => apiRequest<Doctor[]>("/api/favorites", { signal }),
+    queryFn: async ({ signal }) => {
+      const value = await apiRequest<{ doctor: ApiDoctor }[]>("/api/favorites", { signal });
+      return value.map((item) => mapDoctor(item.doctor));
+    },
   });
   return q.isPending ? (
     <GridSkeleton />
@@ -394,10 +561,23 @@ function Favorites() {
             </div>
           </div>
           <div className="mt-5 flex gap-2">
-            <Button size="sm" className="flex-1">
-              View profile
+            <Button size="sm" className="flex-1" asChild>
+              <Link href={`/doctors/${d.id}`}>View profile</Link>
             </Button>
-            <Button size="icon" variant="outline" aria-label="Remove favorite">
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label="Remove favorite"
+              onClick={async () => {
+                try {
+                  await apiRequest(`/api/favorites/${d.id}`, { method: "DELETE" });
+                  await client.invalidateQueries({ queryKey: ["favorites"] });
+                  toast.success("Removed from favorites");
+                } catch (error) {
+                  toast.error(error instanceof Error ? error.message : "Could not remove favorite");
+                }
+              }}
+            >
               <Trash2 size={16} />
             </Button>
           </div>
@@ -413,6 +593,10 @@ function Favorites() {
 }
 
 function Reviews() {
+  const reviews = useQuery({
+    queryKey: ["reviews", "mine"],
+    queryFn: ({ signal }) => apiRequest<ApiReview[]>("/api/reviews/mine", { signal }),
+  });
   return (
     <Card className="p-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row">
@@ -422,21 +606,33 @@ function Reviews() {
             Review eligibility and edits are validated by the backend.
           </p>
         </div>
-        <Button>
-          <Plus size={17} />
-          Add review
-        </Button>
+        <Badge>Completed visits only</Badge>
       </div>
-      <Empty
-        bare
-        title="No reviews yet"
-        description="After a completed consultation, eligible visits will appear here."
-      />
+      {reviews.isPending ? (
+        <Skeleton className="mt-5 h-40" />
+      ) : reviews.data?.length ? (
+        <div className="mt-5 divide-y divide-border">
+          {reviews.data.map((review) => (
+            <div key={review._id} className="py-5">
+              <p className="font-bold text-amber-600">{review.rating}/5 stars</p>
+              <p className="mt-2 text-sm leading-6 text-muted-foreground">{review.reviewText}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{formatDate(review.createdAt)}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Empty
+          bare
+          title="No reviews yet"
+          description="Reviews created after completed consultations will appear here."
+        />
+      )}
     </Card>
   );
 }
 
 type MedicationForm = {
+  appointmentId: string;
   diagnosis: string;
   notes: string;
   medications: {
@@ -448,6 +644,11 @@ type MedicationForm = {
   }[];
 };
 function Prescriptions({ role }: { role: UserRole }) {
+  const prescriptions = useQuery({
+    queryKey: ["prescriptions", "mine"],
+    queryFn: ({ signal }) => apiRequest<ApiPrescription[]>("/api/prescriptions/mine", { signal }),
+    enabled: role === "patient",
+  });
   const {
     register,
     control,
@@ -455,25 +656,49 @@ function Prescriptions({ role }: { role: UserRole }) {
     formState: { isSubmitting },
   } = useForm<MedicationForm>({
     defaultValues: {
+      appointmentId: "",
       medications: [
         { name: "", dosage: "", frequency: "", duration: "", instructions: "" },
       ],
     },
   });
   const fields = useFieldArray({ control, name: "medications" });
-  if (role !== "doctor")
-    return (
+  if (role !== "doctor") {
+    if (prescriptions.isPending) return <GridSkeleton />;
+    return prescriptions.data?.length ? (
+      <div className="grid gap-5 md:grid-cols-2">
+        {prescriptions.data.map((prescription) => (
+          <Card key={prescription._id} className="p-6">
+            <p className="text-xs font-semibold text-muted-foreground">
+              {formatDate(prescription.createdAt)}
+            </p>
+            <h2 className="mt-2 text-lg font-extrabold">{prescription.diagnosis}</h2>
+            <ul className="mt-4 space-y-3">
+              {prescription.medications.map((medicine, index) => (
+                <li key={`${medicine.name}-${index}`} className="rounded-xl bg-muted p-3 text-sm">
+                  <b>{medicine.name}</b> — {medicine.dosage}, {medicine.frequency} for {medicine.duration}
+                </li>
+              ))}
+            </ul>
+            {prescription.notes && (
+              <p className="mt-4 text-sm text-muted-foreground">{prescription.notes}</p>
+            )}
+          </Card>
+        ))}
+      </div>
+    ) : (
       <Empty
         title="No prescriptions available"
         description="Prescriptions from completed consultations will appear here."
       />
     );
+  }
   return (
     <form
       onSubmit={handleSubmit(async (values) => {
         try {
           await apiRequest("/api/prescriptions", {
-            method: "POST",
+            method: "PUT",
             body: values,
           });
           toast.success("Prescription saved");
@@ -486,6 +711,13 @@ function Prescriptions({ role }: { role: UserRole }) {
       className="grid gap-6 xl:grid-cols-[1fr_320px]"
     >
       <Card className="p-6">
+        <div className="mb-5">
+          <Label>Completed appointment ID</Label>
+          <Input
+            placeholder="Paste the completed appointment ID"
+            {...register("appointmentId", { required: true })}
+          />
+        </div>
         <div>
           <Label>Diagnosis</Label>
           <Input {...register("diagnosis", { required: true })} />
@@ -572,6 +804,11 @@ function Prescriptions({ role }: { role: UserRole }) {
 }
 
 function Schedule() {
+  const client = useQueryClient();
+  const schedules = useQuery({
+    queryKey: ["schedules"],
+    queryFn: ({ signal }) => apiRequest<ApiSchedule[]>("/api/schedules/me", { signal }),
+  });
   const {
     register,
     handleSubmit,
@@ -596,10 +833,17 @@ function Schedule() {
               return;
             }
             try {
-              await apiRequest("/api/doctor/schedules", {
+              await apiRequest("/api/schedules", {
                 method: "POST",
-                body: values,
+                body: {
+                  day: values.day,
+                  startTime: values.start,
+                  endTime: values.end,
+                  slotDuration: Number(values.duration),
+                  active: true,
+                },
               });
+              await client.invalidateQueries({ queryKey: ["schedules"] });
               toast.success("Schedule updated");
             } catch (e) {
               toast.error(
@@ -650,11 +894,29 @@ function Schedule() {
       </Card>
       <Card className="p-6">
         <h2 className="font-extrabold">Weekly schedule</h2>
-        <Empty
-          bare
-          title="No availability added"
-          description="Add your first recurring schedule from the form."
-        />
+        {schedules.isPending ? (
+          <Skeleton className="mt-5 h-40" />
+        ) : schedules.data?.length ? (
+          <div className="mt-5 divide-y divide-border">
+            {schedules.data.map((schedule) => (
+              <div key={schedule._id} className="flex items-center justify-between py-4">
+                <div>
+                  <p className="font-bold">{schedule.day}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {schedule.startTime}–{schedule.endTime} · {schedule.slotDuration} minute slots
+                  </p>
+                </div>
+                <Status value={schedule.active ? "active" : "inactive"} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <Empty
+            bare
+            title="No availability added"
+            description="Add your first recurring schedule from the form."
+          />
+        )}
       </Card>
     </div>
   );
@@ -665,12 +927,51 @@ function Profile({ role }: { role: UserRole }) {
     register,
     handleSubmit,
     formState: { isSubmitting },
-  } = useForm();
+  } = useForm<{
+    name?: string;
+    phone?: string;
+    gender?: string;
+    hospital?: string;
+    experience?: number;
+    consultationFee?: number;
+    qualifications?: string;
+    biography?: string;
+  }>();
   return (
     <form
       onSubmit={handleSubmit(async (values) => {
         try {
-          await apiRequest("/api/users/me", { method: "PATCH", body: values });
+          const userFields = Object.fromEntries(
+            Object.entries({ name: values.name, phone: values.phone, gender: values.gender })
+              .filter(([, value]) => value !== undefined && value !== ""),
+          );
+          if (Object.keys(userFields).length) {
+            await apiRequest("/api/users/me", { method: "PATCH", body: userFields });
+          }
+          if (role === "doctor") {
+            const doctorFields = Object.fromEntries(
+              Object.entries({
+                hospitalName: values.hospital,
+                experience: values.experience,
+                consultationFee: values.consultationFee,
+                qualifications: values.qualifications
+                  ?.split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+                biography: values.biography,
+              }).filter(([, value]) => {
+                if (Array.isArray(value)) return value.length > 0;
+                if (typeof value === "number") return Number.isFinite(value);
+                return value !== undefined && value !== "";
+              }),
+            );
+            if (Object.keys(doctorFields).length) {
+              await apiRequest("/api/doctors/me/profile", {
+                method: "PATCH",
+                body: doctorFields,
+              });
+            }
+          }
           toast.success("Profile updated");
         } catch (e) {
           toast.error(
@@ -720,11 +1021,11 @@ function Profile({ role }: { role: UserRole }) {
               </div>
               <div>
                 <Label>Experience (years)</Label>
-                <Input type="number" min="0" {...register("experience")} />
+                <Input type="number" min="0" {...register("experience", { valueAsNumber: true })} />
               </div>
               <div>
                 <Label>Consultation fee</Label>
-                <Input type="number" min="0" {...register("consultationFee")} />
+                <Input type="number" min="0" {...register("consultationFee", { valueAsNumber: true })} />
               </div>
               <div className="sm:col-span-2">
                 <Label>Qualifications</Label>
@@ -750,13 +1051,25 @@ function Profile({ role }: { role: UserRole }) {
 }
 
 function UsersPanel() {
+  const client = useQueryClient();
   const q = useQuery({
     queryKey: ["admin-users"],
-    queryFn: ({ signal }) =>
-      apiRequest<Paginated<UserRecord>>("/api/admin/users", {
+    queryFn: async ({ signal }) => {
+      const value = await apiRequest<Paginated<ApiUser>>("/api/admin/users", {
         query: { page: 1, limit: 20 },
         signal,
-      }),
+      });
+      return {
+        ...value,
+        data: value.data.map(({ _id, name, email, role, status }) => ({
+          id: _id,
+          name,
+          email,
+          role,
+          status,
+        })),
+      } satisfies Paginated<UserRecord>;
+    },
   });
   return (
     <>
@@ -793,7 +1106,23 @@ function UsersPanel() {
                 <Status value={u.status} />
               </Cell>
               <Cell>
-                <Button size="sm" variant="outline">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={async () => {
+                    const action = u.status === "suspended" ? "reactivate" : "suspend";
+                    if (!window.confirm(`${action} ${u.name}?`)) return;
+                    try {
+                      await apiRequest(`/api/admin/users/${u.id}/${action}`, {
+                        method: "PATCH",
+                      });
+                      await client.invalidateQueries({ queryKey: ["admin-users"] });
+                      toast.success(`User ${action}d`);
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not update user");
+                    }
+                  }}
+                >
                   {u.status === "suspended" ? "Reactivate" : "Suspend"}
                 </Button>
               </Cell>
@@ -806,13 +1135,16 @@ function UsersPanel() {
 }
 
 function DoctorsPanel() {
+  const client = useQueryClient();
   const q = useQuery({
     queryKey: ["admin-doctors"],
-    queryFn: ({ signal }) =>
-      apiRequest<Paginated<Doctor>>("/api/admin/doctors", {
+    queryFn: async ({ signal }) => {
+      const value = await apiRequest<Paginated<ApiDoctor>>("/api/admin/doctors", {
         query: { page: 1, limit: 20 },
         signal,
-      }),
+      });
+      return { ...value, data: value.data.map(mapDoctor) };
+    },
   });
   return q.isPending ? (
     <TableSkeleton />
@@ -839,8 +1171,31 @@ function DoctorsPanel() {
           </Cell>
           <Cell>
             <div className="flex gap-2">
-              <Button size="sm">Verify</Button>
-              <Button size="sm" variant="outline">
+              <Button
+                size="sm"
+                onClick={async () => {
+                  try {
+                    await apiRequest(`/api/admin/doctors/${d.id}/verify`, { method: "PATCH" });
+                    await client.invalidateQueries({ queryKey: ["admin-doctors"] });
+                    toast.success("Doctor verified");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Could not verify doctor");
+                  }
+                }}
+              >Verify</Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={async () => {
+                  try {
+                    await apiRequest(`/api/admin/doctors/${d.id}/reject`, { method: "PATCH" });
+                    await client.invalidateQueries({ queryKey: ["admin-doctors"] });
+                    toast.success("Doctor rejected");
+                  } catch (error) {
+                    toast.error(error instanceof Error ? error.message : "Could not reject doctor");
+                  }
+                }}
+              >
                 Reject
               </Button>
             </div>
@@ -854,8 +1209,27 @@ function DoctorsPanel() {
 function Analytics() {
   const q = useQuery({
     queryKey: ["admin-analytics"],
-    queryFn: ({ signal }) =>
-      apiRequest<AnalyticsData>("/api/admin/analytics", { signal }),
+    queryFn: async ({ signal }) => {
+      const value = await apiRequest<{
+        appointmentsOverTime: { _id: string; count: number }[];
+        appointmentStatuses: { _id: string; count: number }[];
+        revenueOverTime: { _id: string; revenue: number }[];
+      }>("/api/analytics/admin", { signal });
+      return {
+        appointmentsOverTime: value.appointmentsOverTime.map((item) => ({
+          label: item._id,
+          value: item.count,
+        })),
+        appointmentsByStatus: value.appointmentStatuses.map((item) => ({
+          name: item._id,
+          value: item.count,
+        })),
+        revenueTrend: value.revenueOverTime.map((item) => ({
+          label: item._id,
+          value: item.revenue,
+        })),
+      } satisfies AnalyticsData;
+    },
   });
   if (q.isPending) return <GridSkeleton />;
   if (!q.data)
